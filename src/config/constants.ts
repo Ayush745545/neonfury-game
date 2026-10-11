@@ -20,6 +20,25 @@ export const JUMP_VX_FACTOR = 0.62;      // horizontal momentum from held dir at
 export const GROUND_FRICTION = 10.5;     // knockback slide decel
 export const AIR_DRAG = 0.6;
 
+// State-dependent ground friction (units/s² deceleration)
+export const FRICTION_IDLE = 38;          // quick stop for neutral states
+export const FRICTION_ATTACK = 18;        // moderate — committed but not glued
+export const FRICTION_HITSTUN = 14;       // slides a bit — felt the hit
+export const FRICTION_KNOCKDOWN = 7;      // long slide — knocked down hard
+export const FRICTION_KO = 5;             // corpse slide
+
+// Landing impact
+export const LAND_IMPACT_SOFT = 4;        // |vy| threshold for normal land (no extra effect)
+export const LAND_IMPACT_MEDIUM = 9;      // |vy| threshold for dust + light shake
+export const LAND_IMPACT_HARD = 16;       // |vy| threshold for burst + heavy shake + stun
+export const LAND_HARD_STUN_FRAMES = 4;   // brief landing lag on a hard fall
+export const LAND_VX_DAMP_SOFT = 0.72;    // vx multiplier on soft landing
+export const LAND_VX_DAMP_HARD = 0.38;    // vx multiplier on hard landing
+
+// Slide deceleration curve (exponential blend factor per second)
+export const SLIDE_DECAY_RATE = 8.5;      // higher = faster exponential taper
+export const SLIDE_LINEAR_THRESHOLD = 0.8; // below this speed, switch to instant stop
+
 /** Rounds */
 export const ROUND_TIME = 99;            // seconds
 export const ROUNDS_TO_WIN = 2;          // best of three

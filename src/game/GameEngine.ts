@@ -1021,7 +1021,6 @@ export class GameEngine {
   }
 
   private stepStun(f: FighterRuntime, opp: FighterRuntime): void {
-    f.vx *= 0.86;
     // RENEW-style burst: escape stun with the unique ability
     if (this.tryBurstEscape(f)) return;
     if (f.stateFrame >= f.stunFrames) {
@@ -1055,7 +1054,6 @@ export class GameEngine {
   }
 
   private stepKnockdown(f: FighterRuntime): void {
-    if (f.grounded) f.vx *= 0.82;
     if (f.grounded && this.tryBurstEscape(f)) return;
     if (f.grounded && f.stateFrame > K.KNOCKDOWN_LIE_FRAMES + (!Math.abs(f.vx) ? 0 : 12)) {
       this.enter(f, 'getup');
@@ -1064,7 +1062,8 @@ export class GameEngine {
   }
 
   private stepKoFall(f: FighterRuntime): void {
-    if (f.grounded) f.vx *= 0.85;
+    // physics() now handles ground friction via FRICTION_KO
+    void f;
   }
 
   private stepSuperVictim(f: FighterRuntime, opp: FighterRuntime): void {
@@ -1084,36 +1083,102 @@ export class GameEngine {
 
   private physics(f: FighterRuntime, frozen: boolean): void {
     if (frozen) return;
+
+    // --- airborne integration ---
     if (!f.grounded) {
       f.vy += K.GRAVITY * K.SIM_DT;
       f.vx *= 1 - K.AIR_DRAG * K.SIM_DT;
     }
+
     f.x += f.vx * K.SIM_DT;
     f.y += f.vy * K.SIM_DT;
+
+    // --- ground contact ---
     if (f.y <= 0 && !f.grounded) {
       f.y = 0;
-      if (f.vy < -3) {
-        f.vx *= 0.55; // landing slide
+      const impactVy = Math.abs(f.vy); // capture before zeroing
+
+      // landing vx damping — proportional to impact severity
+      if (impactVy >= K.LAND_IMPACT_HARD) {
+        f.vx *= K.LAND_VX_DAMP_HARD;
+      } else if (impactVy >= K.LAND_IMPACT_MEDIUM) {
+        // lerp between hard and soft damp
+        const t = (impactVy - K.LAND_IMPACT_MEDIUM) / (K.LAND_IMPACT_HARD - K.LAND_IMPACT_MEDIUM);
+        f.vx *= K.LAND_VX_DAMP_SOFT + (K.LAND_VX_DAMP_HARD - K.LAND_VX_DAMP_SOFT) * t;
+      } else if (impactVy >= K.LAND_IMPACT_SOFT) {
+        f.vx *= K.LAND_VX_DAMP_SOFT;
       }
+      // soft/no impact: no extra vx damping (fighter was barely airborne)
+
       f.vy = 0;
       f.grounded = true;
       this.extras[f.id].wallBounced = false;
-      if (f.state === 'jump') {
-        this.enter(f, 'idle');
+
+      // landing VFX / SFX based on impact severity
+      if (impactVy >= K.LAND_IMPACT_HARD) {
+        bus.emit({ type: 'sfx', name: 'bodyFall', gain: 1.1 });
+        bus.emit({ type: 'vfx', kind: 'burst', x: f.x, y: 0.05, color: '#9fb4c8', power: 2.0 });
+        bus.emit({ type: 'shake', intensity: 0.45 });
+        // brief landing-lag stun (only in neutral/jump — not already in hitstun/knockdown)
+        if (f.state === 'jump') {
+          f.state = 'hitstun';
+          f.stateFrame = 0;
+          f.stunFrames = K.LAND_HARD_STUN_FRAMES;
+        }
+      } else if (impactVy >= K.LAND_IMPACT_MEDIUM) {
         bus.emit({ type: 'sfx', name: 'land' });
-        bus.emit({ type: 'vfx', kind: 'dust', x: f.x, y: 0.03, color: '#9fb4c8', power: 1.6 });
+        bus.emit({ type: 'vfx', kind: 'dust', x: f.x, y: 0.03, color: '#9fb4c8', power: 1.8 });
+        bus.emit({ type: 'shake', intensity: 0.18 });
+      }
+
+      // state transitions on land (keep existing logic but use if/else to avoid double-fire)
+      if (f.state === 'jump' && impactVy < K.LAND_IMPACT_HARD) {
+        this.enter(f, 'idle');
+        if (impactVy < K.LAND_IMPACT_MEDIUM) {
+          // soft land - emit the normal events only if not already emitted above
+          bus.emit({ type: 'sfx', name: 'land' });
+          bus.emit({ type: 'vfx', kind: 'dust', x: f.x, y: 0.03, color: '#9fb4c8', power: 1.6 });
+        }
       }
     } else if (f.y > 0) {
       f.grounded = false;
     }
-    if (f.grounded && f.state !== 'dashF' && f.state !== 'dashB' &&
-      !['attack', 'hitstun', 'blockstun', 'knockdown', 'ko', 'airHitstun', 'getup', 'superVictim'].includes(f.state)) {
-      // ground friction for knockback slides in neutral
-      const dec = K.GROUND_FRICTION * K.SIM_DT;
-      if (Math.abs(f.vx) <= dec) f.vx = 0;
-      else f.vx -= sign(f.vx) * dec;
+
+    // --- ground friction (state-dependent, exponential) ---
+    if (f.grounded) {
+      const frictionRate = this.groundFrictionRate(f);
+      if (frictionRate === null) {
+        // state manages its own vx (dash, attack with root motion, etc.) — skip
+      } else {
+        // exponential decay: fast initial slide, tapers naturally
+        const decay = Math.exp(-frictionRate * K.SIM_DT);
+        f.vx *= decay;
+        // snap to zero below threshold to avoid micro-sliding
+        if (Math.abs(f.vx) < K.SLIDE_LINEAR_THRESHOLD) f.vx = 0;
+      }
     }
+
     this.clampToStage(f);
+  }
+
+  /** Returns ground friction rate (per-second exponential) for f's current state.
+   *  Returns null for states that own their own vx (dash, attack root motion). */
+  private groundFrictionRate(f: FighterRuntime): number | null {
+    switch (f.state) {
+      case 'dashF': case 'dashB': return null; // stepDash owns vx
+      case 'attack': case 'airAttack': return null; // runMoveFrames owns vx
+      case 'hitstun': case 'blockstun': return K.FRICTION_HITSTUN;
+      case 'knockdown': return K.FRICTION_KNOCKDOWN;
+      case 'ko': return K.FRICTION_KO;
+      case 'idle': case 'walkF': case 'walkB':
+      case 'crouch': case 'crouchWalkF': case 'crouchWalkB':
+      case 'blockStand': case 'blockCrouch':
+      case 'getup': case 'victory': case 'defeat':
+      case 'introWalk': case 'introIdle': case 'superVictim':
+        return K.FRICTION_IDLE;
+      default:
+        return K.FRICTION_IDLE;
+    }
   }
 
   /* ------------------------- unique abilities ------------------------- */
