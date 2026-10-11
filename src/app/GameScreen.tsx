@@ -25,6 +25,7 @@ import { ResultsScreen } from '../ui/Results';
 import { ControlsGuide } from '../ui/ControlsGuide';
 import { TouchControls } from '../ui/TouchControls';
 import { GamepadIndicator } from '../ui/GamepadIndicator';
+import { GamepadVibrationListener } from '../game/GamepadVibrationListener';
 import { CHARACTERS } from '../fighters/characters';
 import { audio } from '../audio/audioEngine';
 import { bus } from '../game/eventBus';
@@ -296,6 +297,7 @@ export function GameScreen() {
       )}
       <HKey onControls={() => setShowControls((v) => !v)} />
       <GamepadIndicator />
+      <GamepadVibrationListener />
     </div>
   );
 }

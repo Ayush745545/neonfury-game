@@ -228,6 +228,7 @@ export interface MatchRuntime {
 export type GameEvent =
   | { type: 'hit'; x: number; y: number; z: number; power: number; blocked: boolean; counter: boolean; effect: string; color: string; attacker: 0 | 1; char?: CharId; defender?: CharId }
   | { type: 'whiff'; x: number; y: number; color: string; heavy: boolean }
+  | { type: 'vibrate'; player: 0 | 1; pattern: 'lightHit' | 'mediumHit' | 'heavyHit' | 'counterHit' | 'block' | 'launch' | 'knockdown' | 'special' | 'super' | 'roundStart' | 'victory' | 'damage'; intensity?: number; duration?: number }
   | { type: 'ko'; winner: 0 | 1 | 'double' | 'time' }
   | { type: 'roundWin'; winner: 0 | 1 | 'double' }
   | { type: 'matchEnd'; winner: 0 | 1 | 'double' | null }

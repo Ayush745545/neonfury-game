@@ -599,6 +599,8 @@ export class GameEngine {
       bus.emit({ type: 'sfx', name: 'specialCharge', pan: f.x * 0.08 });
       bus.emit({ type: 'sfx', name: 'power', pan: f.x * 0.08, char: f.char });
       bus.emit({ type: 'announce', text: move.name, style: 'big', side: f.id, color: CHARACTERS[f.char].color });
+      // Vibrate for special move
+      bus.emit({ type: 'vibrate', player: f.id, pattern: 'special' });
     }
     if (move.kind === 'super') {
       bus.emit({ type: 'superStart', attacker: f.id, x: f.x, y: f.y, color: CHARACTERS[f.char].color });
@@ -610,6 +612,9 @@ export class GameEngine {
       bus.emit({ type: 'announce', text: move.name, style: 'big', side: f.id, color: CHARACTERS[f.char].color });
       bus.emit({ type: 'sfx', name: 'superActivate' });
       bus.emit({ type: 'sfx', name: 'power', gain: 1.3, pan: f.x * 0.08, char: f.char });
+      // Vibrate for super move (both players feel it!)
+      bus.emit({ type: 'vibrate', player: f.id, pattern: 'super' });
+      bus.emit({ type: 'vibrate', player: f.id === 0 ? 1 : 0, pattern: 'special' });
     }
     if (move.kind === 'normal') {
       // whiff swish handled on first active frame in stepAttack
@@ -885,6 +890,8 @@ export class GameEngine {
       def.meter = Math.min(K.MAX_METER, def.meter + K.METER_ON_BLOCK * 0.6);
       ex.hitConfirmed = true;
       bus.emit({ type: 'hit', x: contactX, y: contactY + 0.15, z: 0, power: box.damage * 0.4, blocked: true, counter: false, effect: 'spark', color: '#bfe6ff', attacker: att.id, char: att.char, defender: def.char });
+      // Vibrate for block
+      bus.emit({ type: 'vibrate', player: def.id, pattern: 'block' });
       bus.emit({ type: 'sfx', name: 'block', pan: def.x * 0.08 });
       bus.emit({ type: 'shake', intensity: 0.16 });
       return;
@@ -985,6 +992,15 @@ export class GameEngine {
       type: 'hit', x: contactX, y: contactY, z: 0, power: dmg, blocked: false, counter,
       effect: box.effect, color: charColor, attacker: att.id, char: att.char, defender: def.char,
     });
+    
+    // Vibrate defender's controller based on damage
+    const vibPattern = counter ? 'counterHit' 
+      : launches ? 'launch'
+      : dmg >= 80 ? 'heavyHit'
+      : dmg >= 50 ? 'mediumHit'
+      : 'lightHit';
+    bus.emit({ type: 'vibrate', player: def.id, pattern: vibPattern });
+    
     const heavy = box.damage >= 55 || move.kind !== 'normal';
     const kickish = move.sfx === 'kickL' || move.sfx === 'kickH';
     const sfxName = box.effect === 'electric' ? 'zapHit'
@@ -1548,7 +1564,14 @@ export class GameEngine {
     this.syncAnims();
     if (t === 8) bus.emit({ type: 'announce', text: m.round >= 3 ? 'FINAL ROUND' : `ROUND ${m.round}`, style: 'round' });
     if (t === 8) bus.emit({ type: 'sfx', name: 'whooshBig' });
-    if (t === 88) { bus.emit({ type: 'announce', text: 'FIGHT!', style: 'fight' }); bus.emit({ type: 'sfx', name: 'bell' }); }
+    if (t === 88) { 
+      bus.emit({ type: 'announce', text: 'FIGHT!', style: 'fight' }); 
+      bus.emit({ type: 'sfx', name: 'bell' });
+      // No camera shake on fight start - removed for cleaner start
+      // Vibrate both controllers for round start
+      bus.emit({ type: 'vibrate', player: 0, pattern: 'roundStart' });
+      bus.emit({ type: 'vibrate', player: 1, pattern: 'roundStart' });
+    }
     if (t >= 108) {
       m.phase = m.mode === 'training' ? 'training' : 'fight';
       m.phaseFrame = 0;
