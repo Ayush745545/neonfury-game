@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { vfx, MAX_PARTICLES, MAX_RINGS, MAX_ARCS, MAX_SLASHES } from './vfxManager';
+import { vfx, MAX_PARTICLES, MAX_RINGS, MAX_ARCS, MAX_SLASHES, MAX_FLAMES } from './vfxManager';
 import { POWER_PROFILES } from './powerProfiles';
+import { LIGHTNING_VERTICES_PER_ARC, writeLightningRibbon } from './lightningRibbon';
 import { bus } from '../game/eventBus';
-import type { GameEvent } from '../game/types';
+import type { GameEvent, MatchRuntime } from '../game/types';
+import { useSettings } from '../config/settings';
 
 /* ------------------------------------------------------------------ */
 /*  Renders the pooled VFX: GPU points (additive), instanced rings,   */
@@ -26,13 +28,16 @@ function makeSpriteTexture(): THREE.Texture {
   return tex;
 }
 
-const ARC_SEGMENTS = 7;
-
-export function VFXLayer() {
+export function VFXLayer({ match }: { match?: MatchRuntime } = {}) {
+  const quality = useSettings((s) => s.quality);
+  const reduceFlashes = useSettings((s) => s.reduceFlashes);
   const pointsRef = useRef<THREE.Points>(null);
   const ringHRef = useRef<THREE.InstancedMesh>(null);
   const ringVRef = useRef<THREE.InstancedMesh>(null);
-  const arcsRef = useRef<THREE.LineSegments>(null);
+  const flameRef = useRef<THREE.InstancedMesh>(null);
+  const fireLight = useRef<THREE.PointLight>(null);
+  const stormLight = useRef<THREE.PointLight>(null);
+  const effectTime = useRef(0);
 
   const sprite = useMemo(makeSpriteTexture, []);
 
@@ -83,13 +88,94 @@ export function VFXLayer() {
 
   const arcGeo = useMemo(() => {
     const g = new THREE.BufferGeometry();
-    const verts = MAX_ARCS * ARC_SEGMENTS * 2;
+    const verts = MAX_ARCS * LIGHTNING_VERTICES_PER_ARC;
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
     g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(verts * 2), 2));
     g.setDrawRange(0, 0);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 1, 0), 60);
     return g;
   }, []);
+
+  const flameGeo = useMemo(() => {
+    const g = new THREE.PlaneGeometry(1, 1);
+    g.setAttribute('aLife', new THREE.InstancedBufferAttribute(new Float32Array(MAX_FLAMES), 1));
+    g.setAttribute('aSeed', new THREE.InstancedBufferAttribute(new Float32Array(MAX_FLAMES), 1));
+    return g;
+  }, []);
+  const arcBuffers = useMemo(() => ({
+    position: arcGeo.attributes.position.array as Float32Array,
+    color: arcGeo.attributes.color.array as Float32Array,
+    uv: arcGeo.attributes.uv.array as Float32Array,
+  }), [arcGeo]);
+
+  const flameMat = useMemo(() => new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uBrightness: { value: 1 } },
+    vertexShader: /* glsl */`
+      attribute float aLife;
+      attribute float aSeed;
+      varying vec2 vUv;
+      varying float vLife;
+      varying float vSeed;
+      void main() {
+        vUv = uv; vLife = aLife; vSeed = aSeed;
+        gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime;
+      uniform float uBrightness;
+      varying vec2 vUv;
+      varying float vLife;
+      varying float vSeed;
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+        float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+        float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+        float d = fract(sin(dot(i + vec2(1.0), vec2(127.1, 311.7))) * 43758.5453);
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      }
+      void main() {
+        vec2 uv = vUv;
+        float flow = uTime * 4.0 + vSeed;
+        float turbulence = noise(vec2(uv.x * 5.0 + vSeed, uv.y * 7.0 - flow));
+        turbulence += noise(vec2(uv.x * 11.0, uv.y * 14.0 - flow * 1.6)) * 0.3;
+        float center = 0.5 + sin(uv.y * 6.0 - flow) * uv.y * 0.08;
+        float taper = max(0.018, (1.0 - uv.y) * 0.42);
+        float shape = 1.0 - abs(uv.x - center) / taper;
+        float edge = smoothstep(0.05, 0.4, shape + (turbulence - 0.6) * uv.y * 0.75);
+        float base = smoothstep(0.0, 0.09, uv.y);
+        float life = smoothstep(0.0, 0.2, vLife) * min(1.0, (1.0 - vLife) * 9.0 + 0.2);
+        float heat = clamp(shape * 0.8 + (1.0 - uv.y) * 0.6, 0.0, 1.0);
+        vec3 color = mix(vec3(1.4, 0.06, 0.005), vec3(3.4, 0.9, 0.05), heat);
+        color = mix(color, vec3(4.0, 2.8, 0.8), pow(heat, 5.0));
+        gl_FragColor = vec4(color * uBrightness, edge * base * life * 0.65);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide, toneMapped: false,
+  }), []);
+
+  const arcMat = useMemo(() => new THREE.ShaderMaterial({
+    vertexShader: /* glsl */`
+      attribute vec3 color;
+      varying vec2 vUv;
+      varying vec3 vColor;
+      void main() {
+        vUv = uv; vColor = color;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec2 vUv;
+      varying vec3 vColor;
+      void main() {
+        float center = 1.0 - abs(vUv.y * 2.0 - 1.0);
+        float core = pow(center, 12.0);
+        vec3 hot = vec3(max(vColor.r, max(vColor.g, vColor.b)));
+        gl_FragColor = vec4(vColor * 1.5 + hot * core * 3.0, pow(center, 1.4));
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide, toneMapped: false,
+  }), []);
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const colorObj = useMemo(() => new THREE.Color(), []);
@@ -98,15 +184,18 @@ export function VFXLayer() {
     buffers.geo.dispose();
     particleMat.dispose();
     arcGeo.dispose();
+    arcMat.dispose();
+    flameGeo.dispose();
+    flameMat.dispose();
     sprite.dispose();
-  }, [buffers, particleMat, arcGeo, sprite]);
+  }, [buffers, particleMat, arcGeo, arcMat, flameGeo, flameMat, sprite]);
 
   // events → spawns
   useEffect(() => {
     const off = bus.on((e: GameEvent) => {
       if (e.type === 'hit') {
         const power = Math.min(2.2, 0.6 + e.power / 90);
-        const dir = e.attacker === 0 ? 1 : -1;
+        const dir = vfx.getFighter(e.attacker)?.facing ?? (e.attacker === 0 ? 1 : -1);
         const prof = e.char ? POWER_PROFILES[e.char] : null;
         if (e.blocked) {
           if (prof) prof.block(e.x, e.y, dir);
@@ -124,6 +213,8 @@ export function VFXLayer() {
           if (e.counter) vfx.spawnBurst(e.x, e.y, '#ffffff', 0.7);
         }
       } else if (e.type === 'superStart') {
+        const fighter = vfx.getFighter(e.attacker);
+        if (fighter) POWER_PROFILES[fighter.char].activate(e.x, e.y + 0.4, fighter.facing, e.color);
         vfx.spawnCharge(e.x, e.y + 1.1, e.color, 0.9);
         vfx.spawnRing(e.x, 0.05, 0, e.color, 0.3, 5.5, 0.7, false);
         vfx.spawnBurst(e.x, e.y + 1.1, e.color, 1.6);
@@ -159,7 +250,7 @@ export function VFXLayer() {
             break;
           case 'abilityStart': {
             const prof = e.char ? POWER_PROFILES[e.char] : null;
-            if (prof) prof.activate(e.x, e.y, 1, e.color ?? '#ffffff');
+            if (prof) prof.activate(e.x, e.y, vfx.getFighter(e.attacker ?? 0)?.facing ?? e.dir ?? 1, e.color ?? '#ffffff');
             vfx.spawnCharge(e.x, e.y, e.color ?? '#ffffff', 0.6);
             vfx.spawnRing(e.x, 0.06, 0, e.color ?? '#ffffff', 0.2, 2.8, 0.5, false);
             vfx.spawnBurst(e.x, e.y, e.color ?? '#ffffff', 1.1);
@@ -183,6 +274,9 @@ export function VFXLayer() {
           case 'electric':
             vfx.spawnElectric(e.x, e.y, e.color ?? '#44bbff', 6);
             break;
+          case 'splash':
+            vfx.spawnWaterSplash(e.x, e.y, e.power ?? 1);
+            break;
           default: break;
         }
       }
@@ -191,8 +285,12 @@ export function VFXLayer() {
   }, []);
 
   useFrame((state, dt) => {
-    const d = Math.min(dt, 0.05);
+    const frozen = match?.phase === 'paused';
+    const hitstop = match && match.fighters.every((f) => f.hitstop > 0);
+    const d = frozen ? 0 : Math.min(dt, 0.05) * (match?.timeScale ?? 1) * (hitstop ? 0.18 : 1);
+    effectTime.current += d;
     vfx.update(d);
+    const brightness = reduceFlashes ? 0.42 : 1;
 
     // pack particles
     let n = 0;
@@ -202,10 +300,11 @@ export function VFXLayer() {
       if (!p.active) continue;
       const t = p.life / p.maxLife;
       pos[n * 3] = p.x; pos[n * 3 + 1] = p.y; pos[n * 3 + 2] = p.z;
-      col[n * 3] = p.r; col[n * 3 + 1] = p.g; col[n * 3 + 2] = p.b;
+      col[n * 3] = p.r * brightness; col[n * 3 + 1] = p.g * brightness; col[n * 3 + 2] = p.b * brightness;
       size[n] = p.size * (p.kind === 1 ? (1.6 - t * 0.6) : t * 0.9 + 0.1);
       alpha[n] = p.kind === 1 ? Math.min(0.35, t * 0.5) : Math.min(1, t * 1.6);
       n++;
+      if (n >= (quality === 'low' ? 300 : quality === 'medium' ? 700 : MAX_PARTICLES)) break;
     }
     buffers.geo.setDrawRange(0, n);
     (buffers.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
@@ -228,7 +327,7 @@ export function VFXLayer() {
       dummy.rotation.set(r.vertical ? 0 : -Math.PI / 2, r.vertical ? r.rotY : 0, 0);
       dummy.scale.setScalar(s);
       dummy.updateMatrix();
-      colorObj.setRGB(r.r * fade * 1.6, r.g * fade * 1.6, r.b * fade * 1.6);
+      colorObj.setRGB(r.r * fade * 1.6 * brightness, r.g * fade * 1.6 * brightness, r.b * fade * 1.6 * brightness);
       if (r.vertical) {
         ringV!.setMatrixAt(vCount, dummy.matrix);
         ringV!.setColorAt(vCount, colorObj);
@@ -257,7 +356,7 @@ export function VFXLayer() {
         dummy.scale.set(size, size, sl.thick);
         dummy.updateMatrix();
         slashM.setMatrixAt(sn, dummy.matrix);
-        colorObj.setRGB(sl.r * fade * 1.8, sl.g * fade * 1.8, sl.b * fade * 1.8);
+        colorObj.setRGB(sl.r * fade * 1.8 * brightness, sl.g * fade * 1.8 * brightness, sl.b * fade * 1.8 * brightness);
         slashM.setColorAt(sn, colorObj);
         sn++;
       }
@@ -266,34 +365,62 @@ export function VFXLayer() {
       if (slashM.instanceColor) slashM.instanceColor.needsUpdate = true;
     }
 
-    // arcs — regenerate jagged segments each frame
+    // Broad glow and white-hot cores share one ribbon draw call; forks on high.
     const arcPos = arcGeo.attributes.position as THREE.BufferAttribute;
     const arcCol = arcGeo.attributes.color as THREE.BufferAttribute;
+    const arcUv = arcGeo.attributes.uv as THREE.BufferAttribute;
     let v = 0;
-    const time = state.clock.elapsedTime;
+    let arcCount = 0;
+    let stormEnergy = 0;
+    const tick = Math.floor(effectTime.current * (reduceFlashes ? 10 : 28));
     for (let i = 0; i < MAX_ARCS; i++) {
       const a = vfx.arcs[i];
       if (!a.active) continue;
-      const fade = a.life / a.maxLife;
-      let px = a.x1, py = a.y1, pz = a.z1;
-      for (let s = 1; s <= ARC_SEGMENTS; s++) {
-        const t = s / ARC_SEGMENTS;
-        let nx = a.x1 + (a.x2 - a.x1) * t;
-        let ny = a.y1 + (a.y2 - a.y1) * t;
-        let nz = a.z1 + (a.z2 - a.z1) * t;
-        if (s < ARC_SEGMENTS) {
-          const j = 0.09 * Math.sin(a.seed * 13.7 + s * 7.3 + Math.floor(time * 60) * 1.7);
-          const j2 = 0.09 * Math.cos(a.seed * 9.1 + s * 11.9 + Math.floor(time * 60) * 2.3);
-          nx += j; ny += j2; nz += j * 0.5;
-        }
-        arcPos.setXYZ(v, px, py, pz); arcCol.setXYZ(v, a.r * fade * 2.1, a.g * fade * 2.1, a.b * fade * 2.1); v++;
-        arcPos.setXYZ(v, nx, ny, nz); arcCol.setXYZ(v, a.r * fade * 2.1, a.g * fade * 2.1, a.b * fade * 2.1); v++;
-        px = nx; py = ny; pz = nz;
+      v = writeLightningRibbon(a, tick, state.camera.position, arcBuffers, v, quality === 'high', brightness);
+      const energy = (a.life / a.maxLife) * Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
+      if (energy > stormEnergy && stormLight.current) {
+        stormEnergy = energy;
+        stormLight.current.position.set((a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, 0.55);
+        stormLight.current.color.setRGB(a.r, a.g, a.b);
       }
+      if (++arcCount >= (quality === 'low' ? 8 : quality === 'medium' ? 16 : MAX_ARCS)) break;
     }
     arcGeo.setDrawRange(0, v);
     arcPos.needsUpdate = true;
     arcCol.needsUpdate = true;
+    arcUv.needsUpdate = true;
+    if (stormLight.current) stormLight.current.intensity = Math.min(7, stormEnergy * 4) * brightness;
+
+    let fn = 0;
+    let fireEnergy = 0;
+    const lifeAttr = flameGeo.attributes.aLife as THREE.InstancedBufferAttribute;
+    const seedAttr = flameGeo.attributes.aSeed as THREE.InstancedBufferAttribute;
+    if (flameRef.current) {
+      for (const f of vfx.flames) {
+        if (!f.active) continue;
+        const life = f.life / f.maxLife;
+        const swell = 0.7 + (1 - life) * 0.6;
+        dummy.position.set(f.x, f.y + f.height * 0.28, f.z);
+        dummy.quaternion.copy(state.camera.quaternion);
+        dummy.rotateZ(-f.dir * 0.24);
+        dummy.scale.set(f.width * swell, f.height * swell, 1);
+        dummy.updateMatrix();
+        flameRef.current.setMatrixAt(fn, dummy.matrix);
+        lifeAttr.setX(fn, life); seedAttr.setX(fn, f.seed);
+        const energy = life * f.width * f.height;
+        if (energy > fireEnergy && fireLight.current) {
+          fireEnergy = energy;
+          fireLight.current.position.set(f.x, f.y + 0.3, 0.5);
+        }
+        if (++fn >= (quality === 'low' ? 10 : quality === 'medium' ? 22 : MAX_FLAMES)) break;
+      }
+      flameRef.current.count = fn;
+      flameRef.current.instanceMatrix.needsUpdate = true;
+      lifeAttr.needsUpdate = true; seedAttr.needsUpdate = true;
+    }
+    flameMat.uniforms.uTime.value = effectTime.current;
+    flameMat.uniforms.uBrightness.value = brightness;
+    if (fireLight.current) fireLight.current.intensity = Math.min(9, fireEnergy * 9) * brightness;
   });
 
   return (
@@ -307,9 +434,10 @@ export function VFXLayer() {
         <ringGeometry args={[0.8, 1, 40]} />
         <meshBasicMaterial transparent blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
       </instancedMesh>
-      <lineSegments ref={arcsRef} geometry={arcGeo} frustumCulled={false}>
-        <lineBasicMaterial vertexColors transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
-      </lineSegments>
+      <mesh geometry={arcGeo} material={arcMat} frustumCulled={false} />
+      <instancedMesh ref={flameRef} args={[flameGeo, flameMat, MAX_FLAMES]} frustumCulled={false} />
+      {quality !== 'low' && <pointLight ref={fireLight} color="#ff6b22" intensity={0} distance={5} decay={2} />}
+      {quality === 'high' && <pointLight ref={stormLight} color="#ffe14d" intensity={0} distance={5} decay={2} />}
       <instancedMesh ref={slashRef} args={[undefined, undefined, MAX_SLASHES]} frustumCulled={false}>
         <torusGeometry args={[1, 0.05, 4, 22, 2.5]} />
         <meshBasicMaterial transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} side={THREE.DoubleSide} />

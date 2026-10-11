@@ -1117,6 +1117,7 @@ export class GameEngine {
       if (impactVy >= K.LAND_IMPACT_HARD) {
         bus.emit({ type: 'sfx', name: 'bodyFall', gain: 1.1 });
         bus.emit({ type: 'vfx', kind: 'burst', x: f.x, y: 0.05, color: '#9fb4c8', power: 2.0 });
+        bus.emit({ type: 'vfx', kind: 'splash', x: f.x, y: 0, power: 2.2 });
         bus.emit({ type: 'shake', intensity: 0.45 });
         // brief landing-lag stun (only in neutral/jump — not already in hitstun/knockdown)
         if (f.state === 'jump') {
@@ -1127,6 +1128,7 @@ export class GameEngine {
       } else if (impactVy >= K.LAND_IMPACT_MEDIUM) {
         bus.emit({ type: 'sfx', name: 'land' });
         bus.emit({ type: 'vfx', kind: 'dust', x: f.x, y: 0.03, color: '#9fb4c8', power: 1.8 });
+        bus.emit({ type: 'vfx', kind: 'splash', x: f.x, y: 0, power: Math.min(2.0, impactVy / K.LAND_IMPACT_MEDIUM) });
         bus.emit({ type: 'shake', intensity: 0.18 });
       }
 
