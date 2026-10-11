@@ -12,6 +12,7 @@ import { audio } from '../audio/audioEngine';
 import { SettingsPanel } from './SettingsPanel';
 import { ControlsGuide } from './ControlsGuide';
 import { GamepadIndicator } from './GamepadIndicator';
+import { useGamepadMenuEdge } from './useGamepadMenu';
 
 /* Cinematic main-menu background: the two fighters face off in the
    rain while the camera drifts on a slow arc. */
@@ -133,6 +134,14 @@ export function MainMenu() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, sel]);
 
+  // Gamepad menu navigation
+  useGamepadMenuEdge(
+    () => { if (tab === 'main') { setSel((s) => (s - 1 + items.length) % items.length); audio.play('uiHover'); } }, // up
+    () => { if (tab === 'main') { setSel((s) => (s + 1) % items.length); audio.play('uiHover'); } }, // down
+    () => { if (tab === 'main') { audio.play('ui'); items[sel].act(); } }, // confirm
+    () => { if (tab === 'settings' || tab === 'controls') { setTab('main'); audio.play('ui'); } } // back
+  );
+
   useEffect(() => {
     // menu atmosphere: rain + music
     const t = window.setTimeout(() => { audio.play('rainOn'); audio.startMusic(); }, 400);
@@ -191,8 +200,8 @@ export function MainMenu() {
 
       <div className="menu-foot">
         <div className="keys">
-          <span><b>W/S</b> navigate</span>
-          <span><b>ENTER</b> select</span>
+          <span><b>W/S</b> or <b>D-Pad</b> navigate</span>
+          <span><b>ENTER</b> or <b>A</b> select</span>
           <span><b>C</b> controls</span>
         </div>
         <div>NEON FURY v1.0 — ORIGINAL FIGHTING GAME PROTOTYPE</div>

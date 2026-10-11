@@ -35,6 +35,7 @@ interface SettingsState {
   colorblindBars: boolean;   // accessibility: blue/orange health bars
   uiScale: number;           // HUD/menu scale (0.85–1.3)
   gamepadEnabled: boolean;   // poll gamepads for P1/P2
+  vibrationIntensity: number; // haptic feedback strength (0.0–1.0, 0=off)
   bindings: Bindings;
   set: (partial: Partial<Omit<SettingsState, 'set' | 'resetBindings'>>) => void;
   bind: (player: 'p1' | 'p2', action: ActionId, code: string) => void;
@@ -58,6 +59,7 @@ export const useSettings = create<SettingsState>()(
       colorblindBars: false,
       uiScale: 1,
       gamepadEnabled: true,
+      vibrationIntensity: 1.0,
       bindings: DEFAULT_BINDINGS,
       set: (partial) => set(partial),
       bind: (player, action, code) =>

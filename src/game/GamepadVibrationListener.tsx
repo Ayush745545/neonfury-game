@@ -10,11 +10,12 @@ import type { GameEvent } from './types';
  */
 export function GamepadVibrationListener() {
   const gamepadEnabled = useSettings((s) => s.gamepadEnabled);
+  const vibrationIntensity = useSettings((s) => s.vibrationIntensity);
 
   useEffect(() => {
-    console.log('[GamepadVibrationListener] Mounted, gamepadEnabled:', gamepadEnabled);
+    console.log('[GamepadVibrationListener] Mounted, gamepadEnabled:', gamepadEnabled, 'intensity:', vibrationIntensity);
     
-    if (!gamepadEnabled) return;
+    if (!gamepadEnabled || vibrationIntensity === 0) return;
 
     const handleEvent = (e: GameEvent) => {
       if (e.type !== 'vibrate') return;
@@ -38,8 +39,11 @@ export function GamepadVibrationListener() {
       };
       
       // Use custom intensity/duration if provided, otherwise use pattern
-      const intensity = e.intensity ?? patternMap[e.pattern]?.intensity ?? 0.5;
+      let intensity = e.intensity ?? patternMap[e.pattern]?.intensity ?? 0.5;
       const duration = e.duration ?? patternMap[e.pattern]?.duration ?? 100;
+      
+      // Apply user's vibration intensity multiplier
+      intensity = intensity * vibrationIntensity;
       
       console.log(`[Vibration] Player ${e.player}: pattern="${e.pattern}", intensity=${intensity}, duration=${duration}ms`);
       
@@ -48,7 +52,7 @@ export function GamepadVibrationListener() {
     };
 
     return bus.on(handleEvent);
-  }, [gamepadEnabled]);
+  }, [gamepadEnabled, vibrationIntensity]);
 
   return null;
 }

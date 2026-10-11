@@ -97,6 +97,7 @@ export function SettingsPanel({ onClose }: { onClose?: () => void }) {
         <button className={`toggle-ctl ${s.gamepadEnabled ? 'on' : ''}`} onClick={() => s.set({ gamepadEnabled: !s.gamepadEnabled })}>
           {s.gamepadEnabled ? 'ON' : 'OFF'}
         </button>
+        {slider('Vibration Intensity', s.vibrationIntensity, (v) => s.set({ vibrationIntensity: v }))}
 
         <div className="set-label" style={{ gridColumn: '1 / -1', marginTop: 8, color: '#ffb3c2' }}>— Rebind Controls (click a key, then press the new one) —</div>
         {(['p1', 'p2'] as const).map((player) => (
