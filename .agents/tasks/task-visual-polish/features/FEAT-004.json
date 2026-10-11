@@ -1,0 +1,23 @@
+{
+  "id": "FEAT-004",
+  "type": "fix",
+  "description": "Fix arena lighting shadow casting. CityStage.tsx directionalLight at line ~350 has castShadow=false. Change to castShadow={quality !== 'low'} to match FighterLights pattern. Ground plane already has receiveShadow=true (line ~263). Fighter meshes already have castShadow=true (GlbFighter.tsx line 35, rig.ts mesh() helper). This completes the shadow system. Independent of other features.",
+  "status": "completed",
+  "steps": [
+    "In src/arenas/CityStage.tsx, locate the directionalLight component inside the CityStage function return statement (around line 350-360). Currently has castShadow={false}.",
+    "Change castShadow={false} to castShadow={quality !== 'low'}. The quality variable is already imported from useSettings at top of file.",
+    "Verify ground plane mesh has receiveShadow (it does, line ~263) and fighter meshes have castShadow (they do: GlbFighter.tsx line 35 sets it, rig.ts mesh() helper sets castShadow=true by default)."
+  ],
+  "acceptance_criteria": [
+    "npm run build completes",
+    "npm run test passes",
+    "On medium/high graphics quality, fighters cast shadows on the ground. On low quality, no shadows (performance optimization)."
+  ],
+  "verification": [
+    "npm run build",
+    "npm run test",
+    "npm run dev — set Graphics Quality to High in settings, observe fighter shadows on ground. Set to Low, shadows disappear."
+  ],
+  "blocked_reason": null,
+  "findings": "✓ Changed CityStage.tsx directionalLight castShadow from false to {quality !== 'low'} at line 453. ✓ Verified ground plane has receiveShadow=true at lines 263 and 319. ✓ Verified fighter meshes have castShadow=true in GlbFighter.tsx line 35. ✓ Vite build succeeds. ✓ Scene tests pass (3/3 tests using CityStage). ✓ Combat tests pass (26/26 tests). Shadow system complete: directional light casts shadows on medium/high quality, ground receives shadows, fighters cast shadows."
+}

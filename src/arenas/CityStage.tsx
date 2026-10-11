@@ -451,7 +451,7 @@ export function CityStage({ def }: { def: StageDef }): JSX.Element {
         position={[-5, 9, 4]}
         intensity={def.weather === 'clear' ? 1.3 : 0.95}
         color={def.moonColor}
-        castShadow={false}
+        castShadow={quality !== 'low'}
         shadow-mapSize-width={shadowSize}
         shadow-mapSize-height={shadowSize}
         shadow-camera-left={-9}
