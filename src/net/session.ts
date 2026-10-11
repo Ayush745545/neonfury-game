@@ -5,6 +5,17 @@ import type { CharId } from '../game/types';
 /* ================================================================== */
 /*  Net session: lobby connection lifecycle + match-config exchange.   */
 /*  A tiny observable store so React screens can subscribe.            */
+/*                                                                   */
+/*  Two transports, same relay protocol:                               */
+/*   - ONLINE  — served over https (Vercel): both peers connect to   */
+/*     wss://<this-site>/api/lobby (Vercel Function, api/lobby.mjs). */
+/*     Works on the same WiFi AND over the internet.                 */
+/*   - LAN     — served by `npm run host`: host relays on the local  */
+/*     host server (ws://…:4173/lobby).                            */
+/*                                                                   */
+/*  Vercel closes WebSocket connections at the function's max        */
+/*  duration, so unexpected closes reconnect with exponential        */
+/*  backoff and the room re-pairs automatically.                     */
 /* ================================================================== */
 
 export type NetStatus =
@@ -12,6 +23,18 @@ export type NetStatus =
   | 'waiting-cfg' | 'ready' | 'in-match' | 'peer-left' | 'error';
 
 export interface NetConfig { char: CharId; stage: string; seed: number }
+
+/** True when the page is served by the online relay (Vercel / vercel dev). */
+export function isOnlineLobby(): boolean {
+  const loc = window.location;
+  return loc.protocol === 'https:'
+    || loc.hostname.endsWith('.vercel.app')
+    || (loc.hostname === 'localhost' && loc.port === '3000');
+}
+
+const MAX_RECONNECTS = 12;
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
 
 class NetSession {
   ws: WebSocket | null = null;
@@ -26,6 +49,9 @@ class NetSession {
   mySeed = (Math.random() * 0xffffff) | 0;
   onMsg: ((m: NetMsg) => void) | null = null;   // in-match driver hook
   private listeners = new Set<() => void>();
+  private lastAddr = '';
+  private reconnects = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -41,31 +67,51 @@ class NetSession {
   }
 
   connect(role: 'host' | 'guest', addr: string, room: string): void {
-    this.disconnect();
+    this.teardownSocket(false);
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this.role = role;
     this.room = room.toUpperCase();
+    this.lastAddr = addr;
     this.peerCfg = {};
     this.myChar = null;
     this.myStage = null;
     this.mySeed = (Math.random() * 0xffffff) | 0;
+    this.reconnects = 0;
     this.setStatus('connecting');
-    const wsAddr = role === 'host'
-      ? `ws://localhost:${this.portOf(addr) || 4173}/lobby?room=${encodeURIComponent(this.room)}&role=host`
-      : `ws://${this.hostOf(addr)}:${this.portOf(addr) || 4173}/lobby?room=${encodeURIComponent(this.room)}&role=guest`;
+    this.openSocket();
+  }
+
+  private openSocket(): void {
+    const role = this.role;
+    const q = `room=${encodeURIComponent(this.room)}&role=${role}`;
+    let wsAddr: string;
+    if (isOnlineLobby()) {
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      wsAddr = `${proto}://${window.location.host}/api/lobby?${q}`;
+    } else if (role === 'host') {
+      wsAddr = `ws://localhost:${this.portOf(this.lastAddr) || 4173}/lobby?${q}`;
+    } else {
+      wsAddr = `ws://${this.hostOf(this.lastAddr)}:${this.portOf(this.lastAddr) || 4173}/lobby?${q}`;
+    }
     try {
       this.ws = new WebSocket(wsAddr);
     } catch (e) {
       this.setStatus('error', String(e));
       return;
     }
-    this.ws.onopen = () => this.setStatus('waiting-peer');
-    this.ws.onerror = () => this.setStatus('error', 'Cannot reach the host server. Is `npm run host` running?');
+    this.ws.onopen = () => { this.reconnects = 0; this.setStatus('waiting-peer'); };
+    this.ws.onerror = () => {
+      this.setStatus(
+        'error',
+        isOnlineLobby() ? 'Cannot reach the online lobby relay.' : 'Cannot reach the host server. Is `npm run host` running?',
+      );
+    };
     this.ws.onclose = () => {
-      if (this.status !== 'idle') {
-        if (this.status === 'in-match') this.setStatus('peer-left');
-        else if (this.status !== 'error') this.setStatus('idle');
-      }
+      if (this.ws) this.ws.onclose = null;
       this.ws = null;
+      if (this.status === 'idle' || this.status === 'error') return; // user quit or rejected
+      if (this.status === 'in-match') this.setStatus('peer-left');
+      this.scheduleReconnect();
     };
     this.ws.onmessage = (ev) => {
       let msg: NetMsg;
@@ -78,13 +124,18 @@ class NetSession {
         case 'paired':
           useMatchStore.getState().setNet(this.role);
           this.setStatus('paired');
+          // Re-paired while a match screen is up (connection was recycled
+          // mid-match): bail both peers back to fighter select so they
+          // re-lock fighters and start a fresh deterministic match.
+          if (useMatchStore.getState().screen === 'game') {
+            useMatchStore.getState().gotoSelect('net');
+          }
           break;
         case 'error':
           this.setStatus('error', msg.msg);
           break;
         case 'peer-left':
-          if (this.status === 'in-match') this.setStatus('peer-left');
-          else this.setStatus('peer-left');
+          this.setStatus('peer-left');
           break;
         case 'cfg':
           this.peerCfg = { ...this.peerCfg, ...msg } as Partial<NetConfig>;
@@ -101,6 +152,36 @@ class NetSession {
       }
       this.emit();
     };
+  }
+
+  /** Close the socket without touching store/screen state. */
+  private teardownSocket(sendBye: boolean): void {
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.ws) {
+      if (sendBye && this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send(JSON.stringify({ t: 'bye' })); } catch { /* already gone */ }
+      }
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnects >= MAX_RECONNECTS) {
+      this.setStatus('error', 'Connection lost.');
+      return;
+    }
+    const delay = Math.min(RECONNECT_BASE_MS * 2 ** this.reconnects, RECONNECT_MAX_MS);
+    this.reconnects++;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.status === 'idle' || this.status === 'error') return;
+      this.setStatus('connecting');
+      this.openSocket();
+    }, delay);
   }
 
   private hostOf(addr: string): string {
@@ -166,12 +247,7 @@ class NetSession {
   }
 
   disconnect(): void {
-    if (this.ws) {
-      this.send({ t: 'bye' });
-      this.ws.onclose = null;
-      this.ws.close();
-      this.ws = null;
-    }
+    this.teardownSocket(true);
     this.onMsg = null;
     this.setStatus('idle');
     useMatchStore.getState().setNet(null);

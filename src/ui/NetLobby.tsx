@@ -1,10 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { netSession } from '../net/session';
+import { netSession, isOnlineLobby } from '../net/session';
 import { useMatchStore } from '../game/matchStore';
 import { audio } from '../audio/audioEngine';
 
-/* Network multiplayer lobby — host or join over the same WiFi.
-   The actual relay/static server is `npm run host` (server/host.mjs). */
+/* Network multiplayer lobby.
+   ONLINE (deployed site): both peers connect to the Vercel lobby
+   relay (wss://<site>/api/lobby) — same WiFi or across the internet.
+   LAN: one machine runs `npm run host` (server/host.mjs) and peers
+   connect to its WebSocket on the same WiFi. */
 
 function useNetSession() {
   useSyncExternalStore(
@@ -21,6 +24,7 @@ export function NetLobby() {
   const setNet = useMatchStore((s) => s.setNet);
   const [tab, setTab] = useState<'host' | 'join'>('host');
   const [room, setRoom] = useState(() => `NF-${Math.floor(1000 + Math.random() * 9000)}`);
+  const online = isOnlineLobby();
   const [addr, setAddr] = useState(() => {
     const h = window.location.hostname;
     return h && h !== 'localhost' && h !== '127.0.0.1' ? `${h}:4173` : '';
@@ -70,7 +74,9 @@ export function NetLobby() {
       <div className="nf-panel net-card">
         <div className="overlay-title" style={{ fontSize: 26, marginBottom: 6 }}>NETWORK PLAY</div>
         <div className="small-note" style={{ marginBottom: 16 }}>
-          Same-WiFi multiplayer · one machine runs <b>npm run host</b>, both open its address
+          {online
+            ? <>Online lobby on this site — same WiFi <b>or</b> anywhere with internet</>
+            : <>Same-WiFi multiplayer · one machine runs <b>npm run host</b>, both open its address</>}
         </div>
 
         {(st === 'idle' || st === 'error' || st === 'peer-left') && (
@@ -86,23 +92,36 @@ export function NetLobby() {
                 <input className="net-input" value={room} maxLength={12}
                   onChange={(e) => setRoom(e.target.value.toUpperCase())} />
                 <button className="nf-btn" style={{ width: '100%' }} onClick={startHost}>CONNECT AS HOST</button>
-                <div className="net-help">
-                  1. On this machine run <b>npm run build</b> once, then <b>npm run host</b>.<br />
-                  2. Your friend (same WiFi) opens <b>{session.lanUrl || 'http://&lt;your-ip&gt;:4173'}</b>.<br />
-                  3. They pick JOIN GAME and enter this room code. Host is Player 1 and picks the stage.
-                </div>
+                {online ? (
+                  <div className="net-help">
+                    Both players open <b>{window.location.href}</b>.<br />
+                    You: HOST GAME · your friend: JOIN GAME with the same room code. Host is Player 1 and picks the stage.
+                  </div>
+                ) : (
+                  <div className="net-help">
+                    1. On this machine run <b>npm run build</b> once, then <b>npm run host</b>.<br />
+                    2. Your friend (same WiFi) opens <b>{session.lanUrl || 'http://&lt;your-ip&gt;:4173'}</b>.<br />
+                    3. They pick JOIN GAME and enter this room code. Host is Player 1 and picks the stage.
+                  </div>
+                )}
               </>
             ) : (
               <>
-                <label className="set-label">HOST ADDRESS (ip:port)</label>
-                <input className="net-input" placeholder="192.168.1.23:4173" value={addr}
-                  onChange={(e) => setAddr(e.target.value)} />
+                {!online && (
+                  <>
+                    <label className="set-label">HOST ADDRESS (ip:port)</label>
+                    <input className="net-input" placeholder="192.168.1.23:4173" value={addr}
+                      onChange={(e) => setAddr(e.target.value)} />
+                  </>
+                )}
                 <label className="set-label">ROOM CODE</label>
                 <input className="net-input" value={room} maxLength={12}
                   onChange={(e) => setRoom(e.target.value.toUpperCase())} />
                 <button className="nf-btn" style={{ width: '100%' }} onClick={startJoin}>JOIN GAME</button>
                 <div className="net-help">
-                  The host's terminal prints the exact address after <b>npm run host</b>. Guest is Player 2.
+                  {online
+                    ? <>Guest is Player 2. The relay is this site — no address needed, just match the room code.</>
+                    : <>The host's terminal prints the exact address after <b>npm run host</b>. Guest is Player 2.</>}
                 </div>
               </>
             )}

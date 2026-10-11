@@ -6,13 +6,16 @@
  *
  * Usage:  npm run host        (build first: npm run build)
  * Env:    PORT=4173
+ *
+ * The lobby relay itself lives in ./lobbyRelay.mjs and is shared with
+ * the online Vercel Function (api/lobby.mjs).
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { WebSocketServer } from 'ws';
+import { attachLobby } from './lobbyRelay.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = join(__dirname, '..', 'dist');
@@ -64,57 +67,12 @@ const server = createServer(async (req, res) => {
   }
 });
 
-/* ---------------- lobby ---------------- */
+/* ---------------- lobby (shared relay) ---------------- */
 
-const wss = new WebSocketServer({ server, path: '/lobby' });
-const rooms = new Map(); // roomCode -> { host: ws|null, guest: ws|null }
 const ip = lanAddress();
-
-function peerOf(room, ws) {
-  return room.host === ws ? room.guest : room.host;
-}
-
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, 'http://localhost');
-  const room = (url.searchParams.get('room') || 'NF-DEFAULT').toUpperCase();
-  const role = url.searchParams.get('role') === 'guest' ? 'guest' : 'host';
-
-  if (!rooms.has(room)) rooms.set(room, { host: null, guest: null });
-  const r = rooms.get(room);
-
-  if (r[role]) {
-    ws.send(JSON.stringify({ t: 'error', msg: `${role} slot already taken in room ${room}` }));
-    ws.close();
-    return;
-  }
-  r[role] = ws;
-  ws._room = room;
-  ws._role = role;
-
-  ws.send(JSON.stringify({ t: 'welcome', you: role, room, lan: { ip, port: PORT, url: `http://${ip}:${PORT}` } }));
-
-  if (r.host && r.guest) {
-    r.host.send(JSON.stringify({ t: 'paired', room }));
-    r.guest.send(JSON.stringify({ t: 'paired', room }));
-  }
-
-  ws.on('message', (data) => {
-    let msg;
-    try { msg = JSON.parse(data.toString()); } catch { return; }
-    const other = peerOf(rooms.get(ws._room), ws);
-    if (other && other.readyState === 1) {
-      other.send(JSON.stringify(msg)); // relay everything else verbatim
-    }
-  });
-
-  ws.on('close', () => {
-    const rm = rooms.get(ws._room);
-    if (!rm) return;
-    if (rm[ws._role] === ws) rm[ws._role] = null;
-    const other = peerOf(rm, ws);
-    if (other && other.readyState === 1) other.send(JSON.stringify({ t: 'peer-left' }));
-    if (!rm.host && !rm.guest) rooms.delete(ws._room);
-  });
+attachLobby(server, {
+  path: '/lobby',
+  publicUrl: () => `http://${ip}:${PORT}`,
 });
 
 server.listen(PORT, '0.0.0.0', () => {
