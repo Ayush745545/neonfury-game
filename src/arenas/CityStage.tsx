@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { MeshReflectorMaterial } from '@react-three/drei';
-import { makeAsphaltTexture, makeBannerTexture, makeHoloTexture, makeSignTexture, makeWindowsTexture } from './textures';
+import { makeAsphaltSurface, makeAsphaltTexture, makeBannerTexture, makeConcreteTexture, makeHoloTexture, makeSignTexture, makeWindowsTexture } from './textures';
 import { Weather, Steam } from './Weather';
 import { StageProps } from './Props';
 import { useSettings } from '../config/settings';
 import { useDispose } from './useDispose';
 import { STAGE_LIMIT } from '../config/constants';
+import { GRAPHICS_PRESETS } from '../app/gfx';
+import { TokyoStreet } from './TokyoStreet';
 import type { StageDef } from './stages';
 import type { JSX } from 'react';
 
@@ -93,7 +95,7 @@ const HOLO_FS = /* glsl */`
   }`;
 
 function HoloBillboards({ def }: { def: StageDef }): JSX.Element | null {
-  const holoDefs = def.holos.slice(0, 2);
+  const holoDefs = useMemo(() => def.holos.slice(0, 2), [def]);
   const texes = useMemo(() => holoDefs.map((h) => makeHoloTexture(h.main, h.sub)), [holoDefs]);
   useDispose(texes);
   const uniforms = useMemo(
@@ -165,7 +167,12 @@ function WindBanners({ def }: { def: StageDef }): JSX.Element {
 function Buildings({ def }: { def: StageDef }): JSX.Element {
   const win = useMemo(() => def.windowTints.map((t, i) => makeWindowsTexture(t, 0.34 - i * 0.04)), [def]);
   useDispose(win);
-  const dark = useMemo(() => new THREE.MeshStandardMaterial({ color: def.buildingTint, roughness: 0.85, metalness: 0.15 }), [def]);
+  const concrete = useMemo(() => def.id === 'neon-tokyo' ? makeConcreteTexture() : null, [def.id]);
+  const dark = useMemo(() => new THREE.MeshStandardMaterial({
+    color: def.id === 'neon-tokyo' ? '#454e5d' : def.buildingTint,
+    map: concrete, roughness: def.id === 'neon-tokyo' ? 0.88 : 0.85, metalness: def.id === 'neon-tokyo' ? 0.06 : 0.15,
+  }), [def, concrete]);
+  useDispose(concrete ? [concrete] : []);
   useDispose([dark]);
 
   const specs: { p: [number, number, number]; s: [number, number, number]; t: number; ry?: number }[] = [
@@ -188,12 +195,16 @@ function Buildings({ def }: { def: StageDef }): JSX.Element {
     <group>
       {specs.map((b, i) => (
         <group key={i} position={b.p} rotation={[0, b.ry ?? 0, 0]}>
-          <mesh material={dark}>
+          <mesh material={dark} receiveShadow>
             <boxGeometry args={b.s} />
           </mesh>
           <mesh position={[0, 0, b.s[2] / 2 + 0.02]}>
             <planeGeometry args={[b.s[0] * 0.96, b.s[1] * 0.97]} />
-            <meshBasicMaterial map={win[b.t]} toneMapped={false} transparent opacity={0.92} />
+            {def.id === 'neon-tokyo' ? (
+              <meshStandardMaterial map={win[b.t]} emissiveMap={win[b.t]} emissive="#e7efff" emissiveIntensity={0.65} roughness={0.3} metalness={0.25} transparent opacity={0.92} />
+            ) : (
+              <meshBasicMaterial map={win[b.t]} toneMapped={false} transparent opacity={0.92} />
+            )}
           </mesh>
           <mesh position={[b.s[0] * 0.3, b.s[1] / 2 + 0.35, 0]}>
             <sphereGeometry args={[0.07, 6, 6]} />
@@ -351,29 +362,39 @@ function Barriers({ def }: { def: StageDef }): JSX.Element {
 
 function Ground({ def }: { def: StageDef }): JSX.Element {
   const quality = useSettings((s) => s.quality);
+  const tokyo = def.id === 'neon-tokyo';
+  const surface = useMemo(() => tokyo ? makeAsphaltSurface() : null, [tokyo]);
   const asphalt = useMemo(() => makeAsphaltTexture(), []);
   useDispose([asphalt]);
+  useDispose(surface ? [surface.color, surface.normal, surface.roughness] : []);
 
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -1]} receiveShadow>
         <planeGeometry args={[64, 44]} />
         {quality === 'low' || !def.ground.wet ? (
-          <meshStandardMaterial map={asphalt} color={def.ground.color} roughness={def.ground.wet ? 0.28 : 0.72} metalness={def.ground.wet ? 0.72 : 0.15} />
+          <meshStandardMaterial
+            map={surface?.color ?? asphalt} normalMap={surface?.normal} normalScale={new THREE.Vector2(0.22, 0.22)}
+            roughnessMap={surface?.roughness} color={tokyo ? '#adb8c7' : def.ground.color}
+            roughness={tokyo ? 0.9 : def.ground.wet ? 0.28 : 0.72} metalness={tokyo ? 0.05 : def.ground.wet ? 0.72 : 0.15}
+          />
         ) : (
           <MeshReflectorMaterial
-            resolution={quality === 'high' ? 1024 : 512}
-            blur={[384, 96]}
+            resolution={GRAPHICS_PRESETS[quality].reflectionResolution}
+            blur={tokyo ? [160, 48] : [384, 96]}
             mixBlur={1}
-            mixStrength={9}
-            roughness={0.42}
+            mixStrength={tokyo ? 3 : 9}
+            roughness={tokyo ? 0.9 : 0.42}
+            roughnessMap={surface?.roughness}
+            normalMap={surface?.normal}
+            normalScale={new THREE.Vector2(0.22, 0.22)}
             depthScale={1.1}
             minDepthThreshold={0.4}
             maxDepthThreshold={1.3}
-            color={def.ground.color}
-            metalness={0.62}
-            map={asphalt}
-            mirror={0.55}
+            color={tokyo ? '#adb8c7' : def.ground.color}
+            metalness={tokyo ? 0.05 : 0.62}
+            map={surface?.color ?? asphalt}
+            mirror={tokyo ? 0.22 : 0.55}
           />
         )}
       </mesh>
@@ -387,10 +408,24 @@ function Ground({ def }: { def: StageDef }): JSX.Element {
           ))}
         </group>
       ))}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+      {/* Yellow dashed center line */}
+      {Array.from({ length: 12 }, (_, i) => (
+        <mesh key={`center-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[-10 + i * 1.6 + 0.4, 0.006, 0]}>
+          <planeGeometry args={[0.8, 0.12]} />
+          <meshBasicMaterial color="#f4d03f" transparent opacity={0.35} toneMapped={false} />
+        </mesh>
+      ))}
+      {/* White crosswalk stripes */}
+      {Array.from({ length: 8 }, (_, i) => (
+        <mesh key={`crosswalk-${i}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.007, 0.0 + i * 0.45]}>
+          <planeGeometry args={[0.35, 3.2]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.22} toneMapped={false} />
+        </mesh>
+      ))}
+      {!tokyo && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
         <ringGeometry args={[3.05, 3.14, 72]} />
         <meshBasicMaterial color={def.neonR} transparent opacity={0.16} toneMapped={false} side={THREE.DoubleSide} />
-      </mesh>
+      </mesh>}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.14, -5.1]} receiveShadow>
         <planeGeometry args={[40, 3.2]} />
         <meshStandardMaterial color="#191c24" roughness={0.55} metalness={0.3} />
@@ -406,7 +441,7 @@ function Ground({ def }: { def: StageDef }): JSX.Element {
 export function CityStage({ def }: { def: StageDef }): JSX.Element {
   const quality = useSettings((s) => s.quality);
   const steamDensity = def.weather === 'rain' || def.weather === 'storm' ? 1 : def.weather === 'mist' ? 1.6 : 0.5;
-  const shadowSize = quality === 'high' ? 2048 : 1024;
+  const shadowSize = GRAPHICS_PRESETS[quality].shadowMapSize;
   return (
     <group>
       <SceneAtmosphere def={def} />
@@ -430,6 +465,7 @@ export function CityStage({ def }: { def: StageDef }): JSX.Element {
 
       <Ground def={def} />
       <Buildings def={def} />
+      {def.id === 'neon-tokyo' && <TokyoStreet def={def} />}
       <NeonSigns def={def} />
       <HoloBillboards def={def} />
       <WindBanners def={def} />
@@ -439,7 +475,7 @@ export function CityStage({ def }: { def: StageDef }): JSX.Element {
       <Barriers def={def} />
       <StageProps props={def.props} def={def} />
       <Steam density={steamDensity} />
-      <Weather kind={def.weather} />
+      <Weather kind={def.weather} tintL={def.neonL} tintR={def.neonR} />
     </group>
   );
 }

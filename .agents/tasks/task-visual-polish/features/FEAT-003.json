@@ -1,0 +1,24 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Add detailed road markings to CityStage.tsx Ground component: yellow dashed center line at z=0 and pedestrian crosswalk pattern near x=0, z=1.5. Existing lane dividers at z=-2.4 and z=2.6 (lines ~280-290) are too sparse. Add new decal meshes at Y=0.005 to avoid z-fighting. Independent of other features.",
+  "status": "completed",
+  "steps": [
+    "In src/arenas/CityStage.tsx Ground component function (lines ~250-295), after the existing lane divider mapping at lines ~280-290, add a new group for center line: map 12 yellow dashed rectangles along x=-10 to x=10 at z=0. Each dash: planeGeometry args [0.8, 0.12], positioned every 1.6 units in x (0.8 solid + 0.8 gap). Y=0.006, rotation [-PI/2,0,0]. Material: meshBasicMaterial color='#f4d03f' (yellow), transparent, opacity 0.35, toneMapped false.",
+    "Add crosswalk: 8 white stripes perpendicular to road at x=0, z=1.5. Each stripe: planeGeometry args [0.35, 3.2], spaced 0.45 units apart in z (z from 0.0 to 3.15). Y=0.007, rotation [-PI/2,0,0]. Material: meshBasicMaterial color='#ffffff', transparent, opacity 0.22, toneMapped false.",
+    "Verify no z-fighting by checking Y positions: ground plane at Y=0, existing lane lines at Y=0.012, new center line at Y=0.006, crosswalk at Y=0.007."
+  ],
+  "acceptance_criteria": [
+    "npm run build completes",
+    "Yellow dashed center line visible along z=0",
+    "White crosswalk stripes visible near center of arena",
+    "No z-fighting or flickering between ground and markings"
+  ],
+  "verification": [
+    "npm run build",
+    "npm run test",
+    "npm run dev — visually confirm yellow center line and white crosswalk on the neon-tokyo stage ground"
+  ],
+  "blocked_reason": null,
+  "findings": "Yellow dashed center line added at z=0 (Y=0.006) with 12 segments spanning x=-10 to x=10. White crosswalk stripes added at x=0, z=1.5 (Y=0.007) with 8 stripes. Y-positions chosen to avoid z-fighting: ground at Y=0, new center line at Y=0.006, crosswalk at Y=0.007, existing lane lines at Y=0.012. TypeScript compilation clean, vite build successful."
+}
