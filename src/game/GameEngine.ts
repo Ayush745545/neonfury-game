@@ -1613,7 +1613,6 @@ export class GameEngine {
       f.stateFrame++;
       if (f.state === 'ko') {
         this.physics(f, false);
-        if (f.grounded) f.vx *= 0.85;
       } else if (f.state !== 'victory') {
         f.vx = 0;
         // winner relaxes into idle until the victory pose
