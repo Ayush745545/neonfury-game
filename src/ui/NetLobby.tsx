@@ -95,7 +95,8 @@ export function NetLobby() {
                 {online ? (
                   <div className="net-help">
                     Both players open <b>{window.location.href}</b>.<br />
-                    You: HOST GAME · your friend: JOIN GAME with the same room code. Host is Player 1 and picks the stage.
+                    You: HOST GAME · your friend: JOIN GAME with the same room code. Host is Player 1 and picks the stage.<br />
+                    <span className="small-note">If pairing takes a few seconds, the lobby retries automatically.</span>
                   </div>
                 ) : (
                   <div className="net-help">

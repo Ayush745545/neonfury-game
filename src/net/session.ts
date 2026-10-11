@@ -35,6 +35,12 @@ export function isOnlineLobby(): boolean {
 const MAX_RECONNECTS = 12;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+/** Vercel may route the two peers to different Function
+    instances (the room table is per-instance). Keep
+    retrying until both connections coincide on one. */
+const PAIR_TIMEOUT_MS = 10000;
+const PAIR_JITTER_MS = 4000;
+const MAX_PAIR_ATTEMPTS = 15;
 
 class NetSession {
   ws: WebSocket | null = null;
@@ -52,6 +58,8 @@ class NetSession {
   private lastAddr = '';
   private reconnects = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pairTimer: ReturnType<typeof setTimeout> | null = null;
+  private pairAttempts = 0;
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -69,6 +77,7 @@ class NetSession {
   connect(role: 'host' | 'guest', addr: string, room: string): void {
     this.teardownSocket(false);
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.pairTimer) { clearTimeout(this.pairTimer); this.pairTimer = null; }
     this.role = role;
     this.room = room.toUpperCase();
     this.lastAddr = addr;
@@ -77,6 +86,7 @@ class NetSession {
     this.myStage = null;
     this.mySeed = (Math.random() * 0xffffff) | 0;
     this.reconnects = 0;
+    this.pairAttempts = 0;
     this.setStatus('connecting');
     this.openSocket();
   }
@@ -99,7 +109,7 @@ class NetSession {
       this.setStatus('error', String(e));
       return;
     }
-    this.ws.onopen = () => { this.reconnects = 0; this.setStatus('waiting-peer'); };
+    this.ws.onopen = () => { this.reconnects = 0; this.setStatus('waiting-peer'); this.armPairTimer(); };
     this.ws.onerror = () => {
       this.setStatus(
         'error',
@@ -109,6 +119,7 @@ class NetSession {
     this.ws.onclose = () => {
       if (this.ws) this.ws.onclose = null;
       this.ws = null;
+      this.clearPairTimer();
       if (this.status === 'idle' || this.status === 'error') return; // user quit or rejected
       if (this.status === 'in-match') this.setStatus('peer-left');
       this.scheduleReconnect();
@@ -120,8 +131,11 @@ class NetSession {
         case 'welcome':
           this.lanUrl = msg.lan.url;
           this.setStatus('waiting-peer');
+          this.armPairTimer();
           break;
         case 'paired':
+          this.pairAttempts = 0;
+          this.clearPairTimer();
           useMatchStore.getState().setNet(this.role);
           this.setStatus('paired');
           // Re-paired while a match screen is up (connection was recycled
@@ -132,7 +146,12 @@ class NetSession {
           }
           break;
         case 'error':
-          this.setStatus('error', msg.msg);
+          // A stale socket of ours may still hold the slot on the
+          // instance; the server closes us right after — treat it
+          // as a retryable blip, not a hard failure.
+          if (!String(msg.msg).includes('already taken')) {
+            this.setStatus('error', msg.msg);
+          }
           break;
         case 'peer-left':
           this.setStatus('peer-left');
@@ -157,6 +176,7 @@ class NetSession {
   /** Close the socket without touching store/screen state. */
   private teardownSocket(sendBye: boolean): void {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.pairTimer) { clearTimeout(this.pairTimer); this.pairTimer = null; }
     if (this.ws) {
       if (sendBye && this.ws.readyState === WebSocket.OPEN) {
         try { this.ws.send(JSON.stringify({ t: 'bye' })); } catch { /* already gone */ }
@@ -182,6 +202,31 @@ class NetSession {
       this.setStatus('connecting');
       this.openSocket();
     }, delay);
+  }
+
+  /** While waiting for the opponent, periodically re-dial the
+      relay so both peers eventually land on the same Function
+      instance (Vercel routes connections per-instance). */
+  private armPairTimer(): void {
+    this.clearPairTimer();
+    if (!isOnlineLobby()) return; // LAN host is a single process — always pairs
+    this.pairTimer = setTimeout(() => {
+      this.pairTimer = null;
+      if (this.status !== 'waiting-peer') return;
+      if (this.pairAttempts >= MAX_PAIR_ATTEMPTS) {
+        this.teardownSocket(false);
+        this.setStatus('error', 'Could not pair in this room. Check the room code and retry.');
+        return;
+      }
+      this.pairAttempts++;
+      this.teardownSocket(false);
+      this.setStatus('connecting');
+      this.openSocket();
+    }, PAIR_TIMEOUT_MS + Math.random() * PAIR_JITTER_MS);
+  }
+
+  private clearPairTimer(): void {
+    if (this.pairTimer) { clearTimeout(this.pairTimer); this.pairTimer = null; }
   }
 
   private hostOf(addr: string): string {

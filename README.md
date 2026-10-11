@@ -29,9 +29,13 @@ Desktop Chrome/Edge/Firefox with a WebGL2 GPU is the target. Use **Settings → 
 
 ---
 
-## 🕹 Same-WiFi multiplayer (LAN netplay)
+## 🕹 Multiplayer
 
 The combat sim is **deterministic lockstep**: only compact 15-bit input masks cross the wire, both peers simulate identically, with checksum verification and host-authoritative snapshot resync as a safety net.
+
+**Online (deployed site):** open the Vercel URL on both machines (same WiFi or anywhere). One player picks **HOST GAME**, the other **JOIN GAME** with the same room code — the lobby relay (`api/lobby.mjs`, a Vercel WebSocket Function at `wss://<site>/api/lobby`) pairs the two browsers. If the two connections land on different relay instances, the lobby re-dials automatically until they pair. Note: Vercel recycles WebSocket connections at the function's max duration (5 min on the free tier); long matches re-pair back to fighter select and restart cleanly.
+
+**Same-WiFi LAN:**
 
 **Machine A (host):**
 ```bash
