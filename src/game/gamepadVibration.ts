@@ -11,17 +11,33 @@ export function vibrateGamepad(
 ): void {
   try {
     const gamepads = navigator.getGamepads?.();
-    if (!gamepads) return;
+    if (!gamepads) {
+      console.warn('[vibrateGamepad] No gamepad API');
+      return;
+    }
 
     const gamepad = gamepads[playerIndex];
-    if (!gamepad || !gamepad.connected) return;
+    if (!gamepad) {
+      console.warn(`[vibrateGamepad] No gamepad at index ${playerIndex}`);
+      return;
+    }
+    
+    if (!gamepad.connected) {
+      console.warn(`[vibrateGamepad] Gamepad ${playerIndex} not connected`);
+      return;
+    }
 
     // Check if vibration is supported
-    if (!gamepad.vibrationActuator) return;
+    if (!gamepad.vibrationActuator) {
+      console.warn(`[vibrateGamepad] No vibrationActuator on gamepad ${playerIndex}`);
+      return;
+    }
 
     // Clamp values
     const clampedIntensity = Math.max(0, Math.min(1, intensity));
     const clampedDuration = Math.max(0, Math.min(5000, duration)); // Max 5 seconds
+
+    console.log(`[vibrateGamepad] Player ${playerIndex}: intensity=${clampedIntensity}, duration=${clampedDuration}ms`);
 
     // Play vibration effect
     gamepad.vibrationActuator.playEffect('dual-rumble', {
@@ -29,12 +45,13 @@ export function vibrateGamepad(
       duration: clampedDuration,
       weakMagnitude: clampedIntensity * 0.5, // Subtle rumble
       strongMagnitude: clampedIntensity,      // Main rumble
-    }).catch(() => {
-      // Vibration failed, silently ignore
+    }).then(() => {
+      console.log(`[vibrateGamepad] Success for player ${playerIndex}`);
+    }).catch((err) => {
+      console.error(`[vibrateGamepad] Failed for player ${playerIndex}:`, err);
     });
   } catch (err) {
-    // Browser doesn't support vibration or error occurred
-    // Fail silently - vibration is optional
+    console.error('[vibrateGamepad] Exception:', err);
   }
 }
 

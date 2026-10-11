@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controller Vibration Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      font-size: 16px;
+      cursor: pointer;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    .info {
+      margin: 20px 0;
+      padding: 10px;
+      background: #333;
+      border-radius: 4px;
+    }
+    .gamepad-list {
+      margin: 10px 0;
+    }
+    .gamepad-item {
+      padding: 8px;
+      margin: 5px 0;
+      background: #444;
+      border-radius: 4px;
+    }
+    .connected { color: #4CAF50; }
+    .disconnected { color: #f44336; }
+  </style>
+</head>
+<body>
+  <h1>🎮 Controller Vibration Test</h1>
+  
+  <div class="info">
+    <strong>Instructions:</strong>
+    <ol>
+      <li>Connect your controller (Xbox, PS4, PS5, etc.)</li>
+      <li>Press any button on the controller to activate it</li>
+      <li>Click the test buttons below</li>
+    </ol>
+  </div>
+
+  <div class="info">
+    <h3>Detected Gamepads:</h3>
+    <div id="gamepad-list" class="gamepad-list">
+      <em>No gamepads detected. Press any button on your controller.</em>
+    </div>
+  </div>
+
+  <h3>Test Vibration:</h3>
+  <button onclick="testVibration(0, 0.3, 100)">Light (P1)</button>
+  <button onclick="testVibration(0, 0.6, 200)">Medium (P1)</button>
+  <button onclick="testVibration(0, 1.0, 300)">Heavy (P1)</button>
+  <br>
+  <button onclick="testVibration(1, 0.3, 100)">Light (P2)</button>
+  <button onclick="testVibration(1, 0.6, 200)">Medium (P2)</button>
+  <button onclick="testVibration(1, 1.0, 300)">Heavy (P2)</button>
+
+  <div class="info">
+    <h3>Console Output:</h3>
+    <div id="output" style="font-size: 12px; max-height: 300px; overflow-y: auto;"></div>
+  </div>
+
+  <script>
+    const output = document.getElementById('output');
+    const gamepadList = document.getElementById('gamepad-list');
+
+    function log(message, type = 'info') {
+      const time = new Date().toLocaleTimeString();
+      const color = type === 'error' ? '#f44336' : type === 'success' ? '#4CAF50' : '#fff';
+      output.innerHTML += `<div style="color: ${color}">[${time}] ${message}</div>`;
+      output.scrollTop = output.scrollHeight;
+      console.log(message);
+    }
+
+    function updateGamepadList() {
+      const gamepads = navigator.getGamepads?.();
+      if (!gamepads) {
+        gamepadList.innerHTML = '<em class="disconnected">Gamepad API not supported in this browser</em>';
+        return;
+      }
+
+      let html = '';
+      let foundAny = false;
+      for (let i = 0; i < gamepads.length; i++) {
+        const gp = gamepads[i];
+        if (gp) {
+          foundAny = true;
+          const vibSupport = gp.vibrationActuator ? '✓ Vibration supported' : '✗ No vibration support';
+          const vibColor = gp.vibrationActuator ? 'connected' : 'disconnected';
+          html += `
+            <div class="gamepad-item">
+              <strong class="connected">Gamepad ${i}:</strong> ${gp.id}<br>
+              <small>Buttons: ${gp.buttons.length}, Axes: ${gp.axes.length}</small><br>
+              <small class="${vibColor}">${vibSupport}</small>
+            </div>
+          `;
+        }
+      }
+
+      if (!foundAny) {
+        gamepadList.innerHTML = '<em>No gamepads detected. Press any button on your controller.</em>';
+      } else {
+        gamepadList.innerHTML = html;
+      }
+    }
+
+    function testVibration(playerIndex, intensity, duration) {
+      log(`Testing vibration: Player ${playerIndex}, Intensity ${intensity}, Duration ${duration}ms`);
+
+      const gamepads = navigator.getGamepads?.();
+      if (!gamepads) {
+        log('ERROR: Gamepad API not available', 'error');
+        alert('Your browser does not support the Gamepad API');
+        return;
+      }
+
+      const gamepad = gamepads[playerIndex];
+      if (!gamepad) {
+        log(`ERROR: No gamepad at index ${playerIndex}`, 'error');
+        alert(`No controller detected at Player ${playerIndex + 1} slot`);
+        return;
+      }
+
+      if (!gamepad.connected) {
+        log(`ERROR: Gamepad ${playerIndex} not connected`, 'error');
+        alert('Controller is not connected');
+        return;
+      }
+
+      if (!gamepad.vibrationActuator) {
+        log(`ERROR: Gamepad ${playerIndex} does not support vibration`, 'error');
+        alert('Your controller does not support vibration, or your browser does not support the Vibration API.\n\nTry using Chrome or Edge for best support.');
+        return;
+      }
+
+      log(`Triggering vibration on ${gamepad.id}...`);
+
+      gamepad.vibrationActuator.playEffect('dual-rumble', {
+        startDelay: 0,
+        duration: duration,
+        weakMagnitude: intensity * 0.5,
+        strongMagnitude: intensity,
+      })
+      .then(() => {
+        log(`✓ Vibration successful for Player ${playerIndex + 1}`, 'success');
+      })
+      .catch((err) => {
+        log(`✗ Vibration failed: ${err.message}`, 'error');
+        alert(`Vibration failed: ${err.message}`);
+      });
+    }
+
+    // Update gamepad list every second
+    setInterval(updateGamepadList, 500);
+    updateGamepadList();
+
+    // Log when gamepads connect/disconnect
+    window.addEventListener('gamepadconnected', (e) => {
+      log(`✓ Gamepad connected: ${e.gamepad.id}`, 'success');
+      updateGamepadList();
+    });
+
+    window.addEventListener('gamepaddisconnected', (e) => {
+      log(`✗ Gamepad disconnected: ${e.gamepad.id}`, 'error');
+      updateGamepadList();
+    });
+
+    log('Vibration test page loaded. Connect a controller and press any button.');
+  </script>
+</body>
+</html>

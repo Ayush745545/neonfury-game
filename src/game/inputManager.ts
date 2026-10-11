@@ -120,6 +120,11 @@ class InputManager {
     const gp = gamepads[playerIndex];
     if (!gp || !gp.connected) return null;
 
+    // Log once when we first detect a gamepad
+    if (!this.gamepadPrev[playerIndex]) {
+      console.log(`[InputManager] ✓ Gamepad ${playerIndex} connected: ${gp.id}`);
+    }
+
     const buttons = gp.buttons;
     const axes = gp.axes;
     
