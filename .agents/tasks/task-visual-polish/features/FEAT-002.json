@@ -1,0 +1,23 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Add contact shadow blobs under fighters. Create ContactShadowBlob component in FighterView.tsx that renders a dark circular mesh at Y=0.001, opacity scaling with fighter height (0 when grounded, 1 when airborne). Render one blob per fighter in the scene. Both ProceduralFighter and ModelFighter need this. Independent of FEAT-001.",
+  "status": "completed",
+  "steps": [
+    "In src/fighters/FighterView.tsx, create and export ContactShadowBlob component. Takes props { fighter: FighterRuntime }. Renders a <mesh> at position [fighter.x, 0.001, 0] with rotation [-PI/2, 0, 0] (horizontal plane). Geometry: circleGeometry radius 0.5. Material: meshBasicMaterial color='#000000', transparent, opacity computed in useFrame as clamp((fighter.y / 2.5), 0, 0.6) so it fades in as fighter jumps and disappears when grounded. Set depthWrite=false.",
+    "In src/fighters/FighterView.tsx, modify the main FighterView export to return a fragment wrapping the existing fighter render plus the ContactShadowBlob. Structure: <><ModelFighter or ProceduralFighter /><ContactShadowBlob fighter={runtime} /></>.",
+    "Test that the blob follows fighter X position, stays at Y=0.001, and opacity changes with fighter.y."
+  ],
+  "acceptance_criteria": [
+    "npm run build completes",
+    "npm run test passes",
+    "Each fighter has a dark circular shadow blob at their feet when standing, fading out as they jump"
+  ],
+  "verification": [
+    "npm run build",
+    "npm run test",
+    "npm run dev — observe both fighters have shadow blobs at Y=0 that fade during jumps"
+  ],
+  "blocked_reason": null,
+  "findings": "Implementation completed successfully. ContactShadowBlob component created with circular geometry at Y=0.001, follows fighter X position, and opacity scales from 0 (grounded) to 0.6 (at height 2.5+). Both ModelFighter and ProceduralFighter render shadow blobs via FighterView wrapper. Build completes successfully."
+}

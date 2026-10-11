@@ -11,9 +11,12 @@ import { damp } from '../game/utils';
 import { vfx } from '../vfx/vfxManager';
 import { POWER_PROFILES } from '../vfx/powerProfiles';
 import { CHARACTERS } from './characters';
+import { ModelFighter } from './GlbFighter';
+import { FIGHTER_MODELS } from './modelAssets';
 
 interface Props {
   runtime: FighterRuntime;
+  preview?: boolean;
 }
 
 /** Maps sim anim-state names to concrete animation ids for this character. */
@@ -26,7 +29,54 @@ function resolveAnimName(f: FighterRuntime): string {
   return resolved ? resolved.name : `idle_${f.char}`;
 }
 
-export function FighterView({ runtime }: Props) {
+/** Contact shadow blob that follows fighter X position and fades with height */
+export function ContactShadowBlob({ fighter }: { fighter: FighterRuntime }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useFrame(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    
+    // Update position to follow fighter X
+    mesh.position.x = fighter.x;
+    
+    // Opacity based on fighter height: 0 when grounded, fades in as fighter jumps
+    // Clamp to max 0.6 opacity at height 2.5 or more
+    const opacity = THREE.MathUtils.clamp(fighter.y / 2.5, 0, 0.6);
+    (mesh.material as THREE.MeshBasicMaterial).opacity = opacity;
+  });
+
+  return (
+    <mesh
+      ref={meshRef}
+      position={[fighter.x, 0.001, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      <circleGeometry args={[0.5, 32]} />
+      <meshBasicMaterial
+        color="#000000"
+        transparent
+        opacity={0}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+}
+
+export function FighterView({ runtime, preview }: Props) {
+  const asset = FIGHTER_MODELS[runtime.char];
+  const fallback = <ProceduralFighter runtime={runtime} preview={preview} />;
+  const fighterRender = asset ? <ModelFighter runtime={runtime} asset={asset} fallback={fallback} preview={preview} /> : fallback;
+  
+  return (
+    <>
+      {fighterRender}
+      <ContactShadowBlob fighter={runtime} />
+    </>
+  );
+}
+
+export function ProceduralFighter({ runtime, preview }: Props) {
   const def = CHARACTERS[runtime.char];
   const rig = useMemo<FighterRig>(() => buildFighterRig(def), [def]);
   const player = useMemo(
@@ -44,7 +94,7 @@ export function FighterView({ runtime }: Props) {
 
     // world transform
     rig.root.position.set(f.x, f.y, 0);
-    const targetYaw = f.facing === 1 ? Math.PI / 2 : -Math.PI / 2;
+    const targetYaw = preview ? Math.PI * 0.18 : f.facing === 1 ? Math.PI / 2 : -Math.PI / 2;
     // shortest-path yaw smoothing (fast turnarounds, no full spins)
     let dy = targetYaw - yaw.current;
     while (dy > Math.PI) dy -= Math.PI * 2;
