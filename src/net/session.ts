@@ -41,6 +41,9 @@ const RECONNECT_MAX_MS = 30000;
 const PAIR_TIMEOUT_MS = 10000;
 const PAIR_JITTER_MS = 4000;
 const MAX_PAIR_ATTEMPTS = 15;
+/** The relay handshake itself can stall (instance spin-up);
+    re-dial instead of hanging in "connecting" forever. */
+const CONNECT_TIMEOUT_MS = 15000;
 
 class NetSession {
   ws: WebSocket | null = null;
@@ -59,6 +62,7 @@ class NetSession {
   private reconnects = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pairTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private pairAttempts = 0;
 
   subscribe(fn: () => void): () => void {
@@ -78,6 +82,7 @@ class NetSession {
     this.teardownSocket(false);
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.pairTimer) { clearTimeout(this.pairTimer); this.pairTimer = null; }
+    if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
     this.role = role;
     this.room = room.toUpperCase();
     this.lastAddr = addr;
@@ -109,7 +114,18 @@ class NetSession {
       this.setStatus('error', String(e));
       return;
     }
-    this.ws.onopen = () => { this.reconnects = 0; this.setStatus('waiting-peer'); this.armPairTimer(); };
+    this.connectTimer = setTimeout(() => {
+      this.connectTimer = null;
+      if (this.ws) { this.ws.onclose = null; this.ws.close(); this.ws = null; }
+      if (this.status === 'idle' || this.status === 'error') return;
+      this.scheduleReconnect();
+    }, CONNECT_TIMEOUT_MS);
+    this.ws.onopen = () => {
+      if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
+      this.reconnects = 0;
+      this.setStatus('waiting-peer');
+      this.armPairTimer();
+    };
     this.ws.onerror = () => {
       this.setStatus(
         'error',
@@ -120,6 +136,7 @@ class NetSession {
       if (this.ws) this.ws.onclose = null;
       this.ws = null;
       this.clearPairTimer();
+      if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
       if (this.status === 'idle' || this.status === 'error') return; // user quit or rejected
       if (this.status === 'in-match') this.setStatus('peer-left');
       this.scheduleReconnect();
@@ -177,6 +194,7 @@ class NetSession {
   private teardownSocket(sendBye: boolean): void {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.pairTimer) { clearTimeout(this.pairTimer); this.pairTimer = null; }
+    if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
     if (this.ws) {
       if (sendBye && this.ws.readyState === WebSocket.OPEN) {
         try { this.ws.send(JSON.stringify({ t: 'bye' })); } catch { /* already gone */ }
