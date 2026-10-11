@@ -11,6 +11,77 @@ function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingCo
   return [c, c.getContext('2d')!];
 }
 
+export interface AsphaltSurface {
+  color: THREE.DataTexture;
+  normal: THREE.DataTexture;
+  roughness: THREE.DataTexture;
+}
+
+/** Original, repeatable PBR maps. Data maps stay linear; only albedo is sRGB. */
+export function makeAsphaltSurface(): AsphaltSurface {
+  const size = 256;
+  const height = new Float32Array(size * size);
+  const color = new Uint8Array(size * size * 4);
+  const normal = new Uint8Array(size * size * 4);
+  const roughness = new Uint8Array(size * size * 4);
+  const hash = (x: number, y: number) => {
+    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  };
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const i = y * size + x;
+    const grain = hash(x, y);
+    // Periodic large-scale wet patches tile without seams.
+    const patch = Math.sin(x / size * Math.PI * 4 + Math.cos(y / size * Math.PI * 2)) *
+      Math.cos(y / size * Math.PI * 4 - Math.sin(x / size * Math.PI * 2));
+    const wet = THREE.MathUtils.smoothstep(patch, -0.25, 0.65);
+    height[i] = grain * (0.5 - wet * 0.35);
+    const light = 37 + grain * 28 - wet * 12;
+    color.set([light * 0.91, light * 0.98, light * 1.05, 255], i * 4);
+    const r = 210 - wet * 155 + grain * 22;
+    roughness.set([r, r, r, 255], i * 4);
+  }
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dx = height[y * size + (x + 1) % size] - height[y * size + (x + size - 1) % size];
+    const dy = height[((y + 1) % size) * size + x] - height[((y + size - 1) % size) * size + x];
+    const n = new THREE.Vector3(-dx * 1.5, -dy * 1.5, 1).normalize();
+    normal.set([(n.x * 0.5 + 0.5) * 255, (n.y * 0.5 + 0.5) * 255, (n.z * 0.5 + 0.5) * 255, 255], (y * size + x) * 4);
+  }
+  const texture = (data: Uint8Array, albedo = false) => {
+    const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(9, 6);
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.colorSpace = albedo ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  };
+  return { color: texture(color, true), normal: texture(normal), roughness: texture(roughness) };
+}
+
+/** Concrete panel albedo with aggregate, stains and expansion seams. */
+export function makeConcreteTexture(): THREE.Texture {
+  const [c, ctx] = makeCanvas(256, 256);
+  ctx.fillStyle = '#737983';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 2600; i++) {
+    const n = Math.sin(i * 19.13) * 43758.5;
+    const fraction = n - Math.floor(n);
+    ctx.fillStyle = i % 3 ? 'rgba(20,25,31,0.08)' : 'rgba(205,215,220,0.10)';
+    ctx.fillRect(fraction * 256, (i * 37.7) % 256, 1.5, 1.5);
+  }
+  ctx.fillStyle = 'rgba(18,22,30,0.3)';
+  for (let x = 0; x < 256; x += 64) ctx.fillRect(x, 0, 2, 256);
+  for (let y = 0; y < 256; y += 128) ctx.fillRect(0, y, 256, 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 5);
+  return tex;
+}
+
 /** Building facade with randomly lit windows. */
 export function makeWindowsTexture(tint: string, density = 0.4): THREE.Texture {
   const [c, ctx] = makeCanvas(256, 512);

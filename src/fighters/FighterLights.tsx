@@ -3,6 +3,8 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { GameEngine } from '../game/GameEngine';
 import { damp } from '../game/utils';
+import { useSettings } from '../config/settings';
+import { GRAPHICS_PRESETS } from '../app/gfx';
 
 /* ================================================================== */
 /*  Fighter light rig: a small lighting cluster that follows the      */
@@ -12,6 +14,8 @@ import { damp } from '../game/utils';
 /* ================================================================== */
 
 export function FighterLightRig({ engine, rimL, rimR }: { engine: GameEngine; rimL: string; rimR: string }) {
+  const quality = useSettings((s) => s.quality);
+  const shadowSize = GRAPHICS_PRESETS[quality].shadowMapSize;
   const key = useRef<THREE.DirectionalLight>(null);
   const fill = useRef<THREE.DirectionalLight>(null);
   const rimA = useRef<THREE.PointLight>(null);
@@ -57,17 +61,19 @@ export function FighterLightRig({ engine, rimL, rimR }: { engine: GameEngine; ri
       <directionalLight
         ref={key}
         color="#ffe9d2"
-        intensity={1.5}
-        castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        intensity={1.8}
+        castShadow={quality !== 'low'}
+        shadow-mapSize-width={shadowSize}
+        shadow-mapSize-height={shadowSize}
         shadow-camera-left={-6}
         shadow-camera-right={6}
         shadow-camera-top={6}
         shadow-camera-bottom={-3}
         shadow-camera-near={0.5}
         shadow-camera-far={22}
-        shadow-bias={-0.0014}
+        shadow-bias={-0.0003}
+        shadow-normalBias={0.018}
+        shadow-radius={3}
       />
       <directionalLight ref={fill} color="#bcd4ff" intensity={0.55} />
       <pointLight ref={rimA} color={rimL} intensity={6.5} distance={7} decay={1.9} />

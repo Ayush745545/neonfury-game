@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { bus } from '../game/eventBus';
 import { useSettings } from '../config/settings';
+import { GRAPHICS_PRESETS } from '../app/gfx';
 import { makePuffTexture } from './textures';
 import { useDispose } from './useDispose';
 import type { WeatherKind } from './stages';
@@ -18,21 +19,26 @@ const RAIN_VS = /* glsl */`
   uniform float uTime;
   uniform float uWind;
   varying float vFade;
+  varying float vTint;
   void main() {
     float h = 14.0;
     float y = mod(aStart.y - uTime * aParams.x, h);
-    float x = aStart.x + uTime * uWind * 0.35 + sin(uTime * 0.3 + aStart.z) * 0.15;
+    float x = mod(aStart.x + 15.0 + uTime * uWind * 0.35, 30.0) - 15.0;
     float len = aParams.y;
     vec3 p = position;
-    vec3 world = vec3(x + p.x * uWind * 0.06, y + p.y * len, aStart.z + p.z);
+    vec3 world = vec3(x + p.y * len * uWind * 0.14, y + p.y * len, aStart.z + p.z);
+    vTint = smoothstep(-8.0, 8.0, x);
     vFade = smoothstep(0.0, 2.2, y) * (1.0 - smoothstep(9.5, 14.0, y));
     gl_Position = projectionMatrix * modelViewMatrix * vec4(world, 1.0);
   }`;
 
 const RAIN_FS = /* glsl */`
   uniform float uOpacity;
+  uniform vec3 uTintL;
+  uniform vec3 uTintR;
   varying float vFade;
-  void main() { gl_FragColor = vec4(0.62, 0.74, 0.92, uOpacity * vFade); }`;
+  varying float vTint;
+  void main() { gl_FragColor = vec4(mix(vec3(0.62, 0.74, 0.92), mix(uTintL, uTintR, vTint), 0.32), uOpacity * vFade); }`;
 
 const PARTICLE_VS = /* glsl */`
   attribute vec3 aStart;
@@ -97,9 +103,9 @@ const SPLASH_FS = /* glsl */`
     gl_FragColor = vec4(0.68, 0.8, 1.0, ring * vAlpha);
   }`;
 
-export function Weather({ kind }: { kind: WeatherKind }): JSX.Element | null {
+export function Weather({ kind, tintL = '#ff2d6f', tintR = '#39c6ff' }: { kind: WeatherKind; tintL?: string; tintR?: string }): JSX.Element | null {
   const quality = useSettings((s) => s.quality);
-  const qf = quality === 'high' ? 1 : quality === 'medium' ? 0.6 : 0.3;
+  const qf = GRAPHICS_PRESETS[quality].rainScale;
   const wet = kind === 'rain' || kind === 'storm';
 
   const drops = Math.round((kind === 'storm' ? 1700 : 1400) * qf);
@@ -131,9 +137,9 @@ export function Weather({ kind }: { kind: WeatherKind }): JSX.Element | null {
 
   const rainMat = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: RAIN_VS, fragmentShader: RAIN_FS,
-    uniforms: { uTime: { value: 0 }, uWind: { value: 1.1 }, uOpacity: { value: 0.3 } },
+    uniforms: { uTime: { value: 0 }, uWind: { value: 1.1 }, uOpacity: { value: 0.3 }, uTintL: { value: new THREE.Color(tintL) }, uTintR: { value: new THREE.Color(tintR) } },
     transparent: true, depthWrite: false,
-  }), []);
+  }), [tintL, tintR]);
 
   const pCount = Math.round(700 * qf);
   const pGeo = useMemo(() => {

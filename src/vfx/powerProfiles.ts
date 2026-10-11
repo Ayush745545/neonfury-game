@@ -34,6 +34,7 @@ export const POWER_PROFILES: Record<CharId, PowerProfile> = {
   ryden: prof({
     trail: 'flame', accent: '#ff8a4d',
     hit(x, y, dir, color, power) {
+      if (power > 0.95) vfx.spawnFlamePlume(x, y - 0.1, dir, Math.min(1.15, power * 0.65), 2);
       vfx.spawnSparks(x, y, 0.1, dir, color, Math.round(9 * power), power);
       vfx.spawnEmbers(x, y, '#ff6a3d', Math.round(5 * power), 0.5, 1.4);
       if (power > 1) vfx.spawnSlash(x, y, 0.12, dir > 0 ? -0.5 : Math.PI + 0.5, '#ff5a4d', 0.3, 1.5 * power, 0.16, 1.2);
@@ -43,6 +44,8 @@ export const POWER_PROFILES: Record<CharId, PowerProfile> = {
       vfx.spawnEmbers(x, y, '#ff8a4d', 3, 0.3, 1);
     },
     activate(x, y, dir, color) {
+      vfx.spawnFlamePlume(x + dir * 0.25, y - 0.2, dir, 1.25);
+      vfx.spawnSmokeVeil(x - dir * 0.15, y, '#3a302b', 5, 1.2);
       vfx.spawnEmbers(x, y + 0.4, '#ff4d2e', 20, 1.1, 2.4);
       vfx.spawnSpiral(x, y + 0.2, color, 14, 0.8, 6, 0.7);
       vfx.spawnSlash(x + dir * 0.6, y + 0.4, 0.1, dir > 0 ? -0.9 : Math.PI + 0.9, '#ff3d2e', 0.2, 2.1, 0.24, 1.4);
@@ -159,6 +162,7 @@ export const POWER_PROFILES: Record<CharId, PowerProfile> = {
     trail: 'electric', accent: '#fff6a8',
     hit(x, y, dir, _color, power) {
       vfx.spawnElectric(x, y, '#ffe14d', Math.round(4 + 2 * power));
+      if (power > 1) vfx.spawnLightningStrike(x, y, dir, Math.min(1.2, power * 0.7));
       vfx.spawnSparks(x, y, 0.1, dir, '#fff6a8', Math.round(8 * power), power * 1.1);
       vfx.spawnRing(x, y, 0.08, '#ffe14d', 0.1, 0.9 * power, 0.14, true, 0);
     },
@@ -167,6 +171,7 @@ export const POWER_PROFILES: Record<CharId, PowerProfile> = {
       vfx.spawnSparks(x, y, 0.1, dir, '#fff6a8', 5, 0.5);
     },
     activate(x, y, dir, _color) {
+      vfx.spawnLightningStrike(x, y + 0.1, dir, 1.3);
       vfx.spawnElectric(x, y + 1, '#ffe14d', 10);
       vfx.spawnRing(x, 0.06, 0, '#fff07d', 0.2, 3, 0.4, false);
       vfx.spawnSparks(x, y + 0.5, 0, dir, '#fff6a8', 16, 1.3);

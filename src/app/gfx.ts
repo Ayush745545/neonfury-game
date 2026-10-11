@@ -1,10 +1,22 @@
 import { useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useSettings } from '../config/settings';
+import type { Quality } from '../config/settings';
+
+/** Shared render budgets. Every preset retains the same gameplay/simulation. */
+export const GRAPHICS_PRESETS: Record<Quality, {
+  dpr: number; shadowMapSize: number; reflectionResolution: number;
+  bloomIntensity: number; bloomResolutionScale: number; rainScale: number;
+}> = {
+  low: { dpr: 1, shadowMapSize: 512, reflectionResolution: 0, bloomIntensity: 0, bloomResolutionScale: 0.35, rainScale: 0.28 },
+  medium: { dpr: 1.25, shadowMapSize: 1024, reflectionResolution: 384, bloomIntensity: 0.48, bloomResolutionScale: 0.5, rainScale: 0.6 },
+  high: { dpr: 1.75, shadowMapSize: 2048, reflectionResolution: 768, bloomIntensity: 0.62, bloomResolutionScale: 0.65, rainScale: 1 },
+};
 
 /* ================================================================== */
-/*  Procedural image-based lighting. Paints an equirectangular neon-  */
-/*  city environment into a canvas, convolves it with PMREM and       */
+/*  Procedural image-based lighting. Builds an HDR equirectangular neon-  */
+/*  city environment from radiance, convolves it with PMREM and       */
 /*  assigns it as scene.environment so every MeshStandardMaterial     */
 /*  gets real specular reflections — zero external HDR assets.        */
 /* ================================================================== */
@@ -17,60 +29,45 @@ export interface EnvPalette {
   intensity?: number;
 }
 
-function paintEquirect(pal: EnvPalette): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = 1024;
-  c.height = 512;
-  const ctx = c.getContext('2d')!;
-
-  // sky → ground vertical gradient
-  const g = ctx.createLinearGradient(0, 0, 0, 512);
-  g.addColorStop(0, pal.top);
-  g.addColorStop(0.48, '#0b0e18');
-  g.addColorStop(0.52, '#080a10');
-  g.addColorStop(1, pal.bottom);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 1024, 512);
-
-  // horizon neon glows (left pink, right cyan by default)
-  const glow = (x: number, color: string, r: number, alpha: number) => {
-    const rg = ctx.createRadialGradient(x, 250, 8, x, 250, r);
-    rg.addColorStop(0, color);
-    rg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = rg;
-    ctx.fillRect(x - r, 250 - r, r * 2, r * 2);
-    ctx.globalAlpha = 1;
+/** Linear HDR radiance, including bright sign panels, feeds the PBR PMREM. */
+function makeNeonEnvironment(pal: EnvPalette): THREE.DataTexture {
+  const width = 512, height = 256;
+  const data = new Float32Array(width * height * 4);
+  const top = new THREE.Color(pal.top);
+  const bottom = new THREE.Color(pal.bottom);
+  const left = new THREE.Color(pal.glowL);
+  const right = new THREE.Color(pal.glowR);
+  const warm = new THREE.Color('#ffd6a0');
+  const color = new THREE.Color();
+  const addRadiance = (source: THREE.Color, intensity: number) => {
+    color.r += source.r * intensity;
+    color.g += source.g * intensity;
+    color.b += source.b * intensity;
   };
-  glow(220, pal.glowL, 300, 0.5);
-  glow(760, pal.glowR, 320, 0.5);
-  glow(512, '#ffc46a', 180, 0.16); // warm center bounce
-
-  // faint star speckle in the upper band
-  ctx.fillStyle = 'rgba(200,220,255,0.5)';
-  for (let i = 0; i < 90; i++) {
-    const x = Math.random() * 1024;
-    const y = Math.random() * 170;
-    ctx.globalAlpha = 0.15 + Math.random() * 0.4;
-    ctx.fillRect(x, y, 1.4, 1.4);
+  const periodicDistance = (x: number, center: number) => Math.min(Math.abs(x - center), 1 - Math.abs(x - center));
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const u = x / width, v = y / height;
+    // DataTexture rows are not flipped: higher v represents the upper hemisphere.
+    color.copy(bottom).lerp(top, v).multiplyScalar(0.8);
+    const horizon = Math.exp(-Math.pow((v - 0.52) / 0.1, 2));
+    const pink = Math.exp(-Math.pow(periodicDistance(u, 0.22) / 0.13, 2)) * horizon;
+    const cyan = Math.exp(-Math.pow(periodicDistance(u, 0.76) / 0.13, 2)) * horizon;
+    addRadiance(left, pink * 0.4);
+    addRadiance(right, cyan * 0.4);
+    // Discrete light cards retain highlight shape at low material roughness.
+    const card = v > 0.43 && v < 0.58;
+    if (card && periodicDistance(u, 0.22) < 0.014) addRadiance(left, 3.5);
+    if (card && periodicDistance(u, 0.76) < 0.019) addRadiance(right, 4);
+    if (v > 0.71 && v < 0.76 && periodicDistance(u, 0.48) < 0.08) addRadiance(warm, 1.5);
+    const window = (x % 21 < 3) && (y % 10 < 3) && v > 0.5 && v < 0.63;
+    if (window && Math.sin(Math.floor(x / 21) * 13 + Math.floor(y / 10) * 9) > 0.2) addRadiance(warm, 0.6);
+    data.set([color.r, color.g, color.b, 1], (y * width + x) * 4);
   }
-  ctx.globalAlpha = 1;
-
-  // skyline silhouette band with lit windows (reflection character)
-  ctx.fillStyle = '#05060c';
-  for (let x = 0; x < 1024; x += 26 + Math.random() * 34) {
-    const w = 20 + Math.random() * 30;
-    const h = 34 + Math.random() * 90;
-    ctx.fillRect(x, 252 - h, w, h);
-    ctx.fillStyle = 'rgba(255,214,150,0.5)';
-    for (let wy = 252 - h + 6; wy < 246; wy += 9) {
-      for (let wx = x + 4; wx < x + w - 4; wx += 7) {
-        if (Math.random() < 0.3) ctx.fillRect(wx, wy, 2.4, 3.2);
-      }
-    }
-    ctx.fillStyle = '#05060c';
-  }
-  return c;
+  const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.LinearSRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 export function ProceduralEnvironment({ pal }: { pal: EnvPalette }): null {
@@ -78,10 +75,7 @@ export function ProceduralEnvironment({ pal }: { pal: EnvPalette }): null {
   const scene = useThree((s) => s.scene);
 
   useEffect(() => {
-    const canvas = paintEquirect(pal);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.mapping = THREE.EquirectangularReflectionMapping;
-    tex.colorSpace = THREE.SRGBColorSpace;
+    const tex = makeNeonEnvironment(pal);
     const pmrem = new THREE.PMREMGenerator(gl);
     pmrem.compileEquirectangularShader();
     const rt = pmrem.fromEquirectangular(tex);
@@ -107,13 +101,8 @@ export function ExposureController(): null {
   const gl = useThree((s) => s.gl);
   useEffect(() => {
     const apply = (v: number) => { gl.toneMappingExposure = v; };
-    // dynamic import avoided: settings store is safe to require here
-    import('../config/settings').then(({ useSettings }) => {
-      apply(useSettings.getState().exposure);
-      const off = useSettings.subscribe((s) => apply(s.exposure));
-      (gl as unknown as { __expOff?: () => void }).__expOff = off;
-    });
-    return () => { (gl as unknown as { __expOff?: () => void }).__expOff?.(); };
+    apply(useSettings.getState().exposure);
+    return useSettings.subscribe((s) => apply(s.exposure));
   }, [gl]);
   return null;
 }

@@ -1,25 +1,11 @@
 import * as THREE from 'three';
 import type { JointName } from '../animations/types';
+import type { CharId } from '../game/types';
 
-/* ================================================================== */
-/*  Imported-model support (GLB/GLTF/FBX).                            */
-/*                                                                     */
-/*  HONEST STATUS: no external character models ship with this repo   */
-/*  (offline environment / licensing). All 15 fighters currently use  */
-/*  the procedural rigs, which are placeholders — NOT "detailed       */
-/*  sculpted models". This module is the real import pipeline: drop   */
-/*  a rigged GLB into public/fighters/<id>.glb (or set `model` in     */
-/*  characters.ts) and it takes over automatically, with graceful     */
-/*  fallback to procedural on any load/parse error.                   */
-/*                                                                     */
-/*  Two animation paths, both driven by the SAME sim state:           */
-/*   1. Native clips — if the file contains clips named like our      */
-/*      anim ids (idle, walkF, lp, hk, ko, victory…), they play       */
-/*      through an AnimationMixer with crossfades.                    */
-/*   2. Bone retarget — otherwise our procedural pose player drives   */
-/*      the model's skeleton through a humanoid bone-name mapping     */
-/*      (Mixamo + common conventions supported out of the box).       */
-/* ================================================================== */
+/* Imported humanoids use independent skin instances and simulation-driven
+ * poses. Recognized native clip tracks can override the retargeted baseline;
+ * missing tracks/attacks retain the combat pose. Unusable/load-failed assets
+ * fall back to the existing procedural fighters. */
 
 export interface ModelAsset {
   url: string;                       // .glb / .gltf / .fbx under public/
@@ -30,26 +16,39 @@ export interface ModelAsset {
   clipMap?: Partial<Record<string, string>>;    // anim id → clip name
 }
 
+/** Bundled CC0 humanoids, with NEON FURY clothing/material derivatives. */
+const QUATERNIUS_BONES: Partial<Record<JointName, string>> = {
+  hips: 'pelvis', spine: 'spine_01', chest: 'spine_03', neck: 'neck_01', head: 'Head',
+  shoulderL: 'clavicle_l', shoulderR: 'clavicle_r',
+  armL: 'upperarm_l', armR: 'upperarm_r', forearmL: 'lowerarm_l', forearmR: 'lowerarm_r',
+  handL: 'hand_l', handR: 'hand_r',
+  thighL: 'thigh_l', thighR: 'thigh_r', shinL: 'calf_l', shinR: 'calf_r', footL: 'foot_l', footR: 'foot_r',
+};
+export const FIGHTER_MODELS: Partial<Record<CharId, ModelAsset>> = {
+  ryden: { url: '/fighters/ryden.glb', scale: 1, boneMap: QUATERNIUS_BONES },
+  volt: { url: '/fighters/volt.glb', scale: 1, boneMap: QUATERNIUS_BONES },
+};
+
 /** Canonical joint → accepted bone-name aliases (lowercased for matching). */
 export const BONE_ALIASES: Record<JointName, string[]> = {
   hips: ['hips', 'hip', 'pelvis', 'root', 'base'],
-  spine: ['spine', 'spine1', 'spine0', 'abdomen', 'waist'],
-  chest: ['spine2', 'chest', 'spine3', 'thorax', 'upperchest'],
-  neck: ['neck'],
+  spine: ['spine', 'spine01', 'spine1', 'spine0', 'abdomen', 'waist'],
+  chest: ['chest', 'spine03', 'spine2', 'spine3', 'spine02', 'thorax', 'upperchest'],
+  neck: ['neck', 'neck01'],
   head: ['head'],
   shoulderL: ['leftshoulder', 'shoulderl', 'lshoulder', 'claviclel'],
   armL: ['leftarm', 'leftuparm', 'upperarml', 'larm', 'leftshoulderjoint'],
-  forearmL: ['leftforearm', 'leftlowarm', 'forearml', 'lforearm', 'leftarmroll'],
+  forearmL: ['leftforearm', 'leftlowarm', 'forearml', 'lowerarml', 'lforearm', 'leftarmroll'],
   handL: ['lefthand', 'handl', 'lhand'],
   shoulderR: ['rightshoulder', 'shoulderr', 'rshoulder', 'clavicler'],
   armR: ['rightarm', 'rightuparm', 'upperarmr', 'rarm', 'rightshoulderjoint'],
-  forearmR: ['rightforearm', 'rightlowarm', 'forearmr', 'rforearm', 'rightarmroll'],
+  forearmR: ['rightforearm', 'rightlowarm', 'forearmr', 'lowerarmr', 'rforearm', 'rightarmroll'],
   handR: ['righthand', 'handr', 'rhand'],
-  thighL: ['leftupleg', 'leftthigh', 'thighl', 'lupleg', 'leftleg'],
-  shinL: ['leftleg', 'leftshin', 'shinl', 'lleg', 'leftcalf'],
+  thighL: ['leftupleg', 'leftthigh', 'thighl', 'lupleg'],
+  shinL: ['leftleg', 'leftshin', 'shinl', 'lleg', 'leftcalf', 'calfl'],
   footL: ['leftfoot', 'footl', 'lfoot', 'leftankle'],
-  thighR: ['rightupleg', 'rightthigh', 'thighr', 'rupleg', 'rightleg'],
-  shinR: ['rightleg', 'rightshin', 'shinr', 'rleg', 'rightcalf'],
+  thighR: ['rightupleg', 'rightthigh', 'thighr', 'rupleg'],
+  shinR: ['rightleg', 'rightshin', 'shinr', 'rleg', 'rightcalf', 'calfr'],
   footR: ['rightfoot', 'footr', 'rfoot', 'rightankle'],
 };
 
@@ -65,15 +64,16 @@ export function collectBones(
   root.traverse((o) => { byName.set(normalize(o.name), o); });
 
   const out: Partial<Record<JointName, THREE.Object3D>> = {};
+  const used = new Set<THREE.Object3D>();
   (Object.keys(BONE_ALIASES) as JointName[]).forEach((jn) => {
     const override = overrides?.[jn];
     if (override) {
       const found = byName.get(normalize(override));
-      if (found) { out[jn] = found; return; }
+      if (found && !used.has(found)) { out[jn] = found; used.add(found); return; }
     }
     for (const alias of BONE_ALIASES[jn]) {
       const found = byName.get(normalize(alias));
-      if (found) { out[jn] = found; break; }
+      if (found && !used.has(found)) { out[jn] = found; used.add(found); break; }
     }
   });
   return out;
@@ -88,7 +88,7 @@ const CRITICAL: JointName[] = ['hips', 'chest', 'head', 'armL', 'armR', 'forearm
 
 /** True when the mapping is good enough to animate the model. */
 export function isUsableMapping(bones: Partial<Record<JointName, THREE.Object3D>>): boolean {
-  return CRITICAL.every((j) => bones[j] !== undefined);
+  return CRITICAL.every((j) => bones[j] !== undefined) && new Set(Object.values(bones)).size === Object.keys(bones).length;
 }
 
 /** Match model animation clips against our anim-id vocabulary. */

@@ -4,45 +4,26 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import { CityStage } from '../arenas/CityStage';
 import { STAGES } from '../arenas/stages';
-import { buildFighterRig } from '../fighters/rig';
-import { CHARACTERS } from '../fighters/characters';
-import { PosePlayer } from '../animations/animPlayer';
-import { BASE_POSES } from '../animations/animData';
+import { FighterView } from '../fighters/FighterView';
+import { previewRuntime } from '../fighters/previewRuntime';
 import { useMatchStore } from '../game/matchStore';
-import { ROSTER } from '../fighters/characters';
 import type { CharId } from '../game/types';
 import { audio } from '../audio/audioEngine';
 import { SettingsPanel } from './SettingsPanel';
 import { ControlsGuide } from './ControlsGuide';
+import { GamepadIndicator } from './GamepadIndicator';
 
 /* Cinematic main-menu background: the two fighters face off in the
    rain while the camera drifts on a slow arc. */
 
 function MenuFighter({ char, x, facing }: { char: CharId; x: number; facing: 1 | -1 }) {
-  const def = CHARACTERS[char];
-  const rig = useMemo(() => buildFighterRig(def), [def]);
-  const player = useMemo(() => new PosePlayer(BASE_POSES[char]), [char]);
-  useEffect(() => () => rig.dispose(), [rig]);
-
-  useFrame((state, dt) => {
-    const t = state.clock.elapsedTime;
-    player.update(`idle_${char}`, t * 60 + (facing === 1 ? 0 : 47), Math.min(dt, 0.05));
-    rig.root.position.set(x, 0, 0);
-    rig.inner.rotation.y = facing === 1 ? Math.PI / 2 : -Math.PI / 2;
-    (Object.keys(rig.joints) as (keyof typeof rig.joints)[]).forEach((jn) => {
-      const e = player.get(jn);
-      rig.joints[jn].rotation.set(e[0], e[1], e[2]);
-    });
-    rig.joints.hips.position.y = rig.hipsAnchorY + player.curHipsY;
-    for (const c of rig.clothSway) {
-      c.obj.rotation.x = c.baseX + Math.sin(t * 2.2 + c.phase) * c.amp;
-      c.obj.rotation.z = c.baseZ + Math.cos(t * 1.7 + c.phase) * c.amp * 0.5;
-    }
-    const glow = 1.6 + Math.sin(t * 2.4) * 0.4;
-    for (const m of rig.trimMaterials) m.emissiveIntensity = glow;
-  });
-
-  return <primitive object={rig.root} />;
+  const runtime = useMemo(() => {
+    const f = previewRuntime(char);
+    f.x = x; f.facing = facing;
+    return f;
+  }, [char, x, facing]);
+  useFrame((_, dt) => { runtime.anim.frame += Math.min(dt, 0.05) * 60; });
+  return <FighterView runtime={runtime} />;
 }
 
 function MenuCamera(): null {
@@ -124,16 +105,14 @@ export function MainMenu() {
   const [tab, setTab] = useState<MenuTab>('main');
   const [sel, setSel] = useState(0);
   const itemsRef = useRef<HTMLButtonElement[]>([]);
-  // rotating showcase: random stage + two random fighters behind the menu
-  const menuStage = useMemo(() => STAGES[Math.floor(Math.random() * STAGES.length)], []);
-  const menuChars = useMemo(() => {
-    const pool = [...ROSTER];
-    const a = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-    const b = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-    return [a, b] as [CharId, CharId];
-  }, []);
+  const menuStage = STAGES[0];
+  const menuChars: [CharId, CharId] = ['ryden', 'volt'];
 
   const items: { label: string; sub: string; act: () => void }[] = [
+    { label: 'Ryden vs Volt', sub: 'PLAY NOW · Neon Tokyo · fire vs lightning', act: () => useMatchStore.setState({
+      screen: 'game', mode: 'vs-cpu', p1Char: 'ryden', p2Char: 'volt', stageId: 'neon-tokyo',
+      showResults: false, paused: false, netRole: null,
+    }) },
     { label: 'Start Game', sub: 'Cinematic arcade match vs CPU — best of three', act: () => gotoSelect('arcade') },
     { label: 'VS CPU', sub: 'Quick match against the CPU', act: () => gotoSelect('vs-cpu') },
     { label: 'Local Multiplayer', sub: 'Two players, one keyboard', act: () => gotoSelect('local') },
@@ -219,6 +198,7 @@ export function MainMenu() {
         <div>NEON FURY v1.0 — ORIGINAL FIGHTING GAME PROTOTYPE</div>
       </div>
       <KeyCatch onControls={() => setTab(tab === 'controls' ? 'main' : 'controls')} />
+      <GamepadIndicator />
     </div>
   );
 }

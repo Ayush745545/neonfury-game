@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useMatchStore } from '../game/matchStore';
 import { netSession } from '../net/session';
@@ -8,6 +8,7 @@ import { audio } from '../audio/audioEngine';
 import type { CharId } from '../game/types';
 
 const COLS = 5;
+const FighterPreview = lazy(() => import('./FighterPreview'));
 
 export function CharacterSelect() {
   const mode = useMatchStore((s) => s.mode);
@@ -52,7 +53,7 @@ export function CharacterSelect() {
       pickChar('p1', c);
       if (!local) {
         // CPU takes the mirror slot; player can still override on stage select back-nav
-        const other = ROSTER.find((r) => r !== c) ?? 'kaito';
+        const other = c === 'ryden' ? 'volt' : c === 'volt' ? 'ryden' : ROSTER.find((r) => r !== c) ?? 'ryden';
         setP2(other);
         pickChar('p2', other);
       }
@@ -91,12 +92,19 @@ export function CharacterSelect() {
       <div className="select-hint">
         {netRole ? (netRole === 'host' ? 'HOST' : 'GUEST') + ' — ' : ''}{who} · WASD/arrows move · J/ENTER confirm · ESC back
       </div>
+      <div className="fighter-select-body">
+      <Suspense fallback={<div className="fighter-preview preview-loading">LOADING FIGHTER…</div>}>
+        <FighterPreview char={focused.id} />
+      </Suspense>
       <div className="roster-grid">
         {ROSTER.map((cid, i) => {
           const c = CHARACTERS[cid];
           const isCursor = cursor === i;
           return (
-            <div
+            <button
+              type="button"
+              aria-label={`Choose ${c.name}`}
+              aria-pressed={p1 === cid || p2 === cid}
               key={cid}
               className={`roster-card ${isCursor ? 'cursor' : ''} ${p1 === cid ? 'sel-p1' : ''} ${p2 === cid && local ? 'sel-p2' : ''}`}
               style={{ borderColor: isCursor ? c.color : undefined }}
@@ -111,9 +119,10 @@ export function CharacterSelect() {
               {p1 === cid && <div className="rc-badge b1">P1</div>}
               {p2 === cid && (local || !p1) && <div className="rc-badge b2">{local ? 'P2' : 'CPU'}</div>}
               {p2 === cid && !local && p1 && <div className="rc-badge b2">CPU</div>}
-            </div>
+            </button>
           );
         })}
+      </div>
       </div>
       <div className="roster-detail nf-panel">
         <div className="rd-left">

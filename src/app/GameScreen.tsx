@@ -14,7 +14,7 @@ import { vfx } from '../vfx/vfxManager';
 import { VFXLayer } from '../vfx/VFXLayer';
 import { CityStage } from '../arenas/CityStage';
 import { getStage } from '../arenas/stages';
-import { ProceduralEnvironment, ExposureController } from './gfx';
+import { ProceduralEnvironment, ExposureController, GRAPHICS_PRESETS } from './gfx';
 import { FighterLightRig } from '../fighters/FighterLights';
 import { PerfHook, PerfOverlay } from './PerfMonitor';
 import { FighterView, HitboxDebug, ProjectileView } from '../fighters/FighterView';
@@ -24,6 +24,7 @@ import { PauseMenu } from '../ui/PauseMenu';
 import { ResultsScreen } from '../ui/Results';
 import { ControlsGuide } from '../ui/ControlsGuide';
 import { TouchControls } from '../ui/TouchControls';
+import { GamepadIndicator } from '../ui/GamepadIndicator';
 import { CHARACTERS } from '../fighters/characters';
 import { audio } from '../audio/audioEngine';
 import { bus } from '../game/eventBus';
@@ -35,20 +36,21 @@ import { bus } from '../game/eventBus';
 
 function Effects() {
   const quality = useSettings((s) => s.quality);
+  const reduceFlashes = useSettings((s) => s.reduceFlashes);
   if (quality === 'low') return null;
-  const caOffset = new THREE.Vector2(0.0006, 0.0004);
+  const caOffset = new THREE.Vector2(0.00025, 0.00018);
   // controlled bloom: higher threshold + smoothing keeps neon glowing
   // without blowing out whites or the additive VFX
   return (
-    <EffectComposer multisampling={0}>
+    <EffectComposer multisampling={0} resolutionScale={GRAPHICS_PRESETS[quality].bloomResolutionScale}>
       <Bloom
-        intensity={quality === 'high' ? 0.82 : 0.55}
-        luminanceThreshold={0.72}
+        intensity={GRAPHICS_PRESETS[quality].bloomIntensity * (reduceFlashes ? 0.55 : 1)}
+        luminanceThreshold={1.05}
         luminanceSmoothing={0.32}
         mipmapBlur
       />
-      <ChromaticAberration offset={caOffset} radialModulation={false} modulationOffset={0.35} />
-      <Vignette eskil={false} offset={0.3} darkness={0.74} />
+      {quality === 'high' && !reduceFlashes && <ChromaticAberration offset={caOffset} radialModulation={false} modulationOffset={0.35} />}
+      <Vignette eskil={false} offset={0.3} darkness={0.48} />
       {quality === 'high' && <SMAA />}
     </EffectComposer>
   );
@@ -92,7 +94,7 @@ function Experience({ engine, showBoxes, stageId, net }: { engine: GameEngine; s
       <FighterView runtime={engine.match.fighters[0]} />
       <FighterView runtime={engine.match.fighters[1]} />
       <ProjectileView engine={engine} />
-      <VFXLayer />
+      <VFXLayer match={engine.match} />
       {showBoxes && <HitboxDebug engine={engine} />}
       <PerfHook />
       <Effects />
@@ -103,7 +105,7 @@ function Experience({ engine, showBoxes, stageId, net }: { engine: GameEngine; s
 export function GameScreen() {
   const mode = useMatchStore((s) => s.mode);
   const p1Char = useMatchStore((s) => s.p1Char) ?? 'ryden';
-  const p2Char = useMatchStore((s) => s.p2Char) ?? 'kaito';
+  const p2Char = useMatchStore((s) => s.p2Char) ?? 'volt';
   const difficulty = useSettings((s) => s.difficulty);
   const introPlayed = useMatchStore((s) => s.introPlayed);
   const paused = useMatchStore((s) => s.paused);
@@ -130,8 +132,8 @@ export function GameScreen() {
     p2Char: p2Char as CharId,
     difficulty,
     seed: mode === 'net' ? netSession.mySeed : undefined,
-    playIntro: mode === 'arcade' && !introPlayed,
-  }), [mode, p1Char, p2Char, difficulty, introPlayed]);
+    playIntro: introFade,
+  }), [mode, p1Char, p2Char, difficulty, introFade]);
 
   const net = useMemo(() => (mode === 'net' ? new NetDriver(engine) : null), [mode, engine]);
   useEffect(() => {
@@ -169,7 +171,7 @@ export function GameScreen() {
         e.preventDefault();
         return;
       }
-      if (e.code === 'Escape' || e.code === 'KeyP') {
+      if (e.code === 'Escape') {
         if (showResults) return;
         if (mode === 'net') return; // no pausing network matches
         engine.setPaused(phase !== 'paused');
@@ -221,8 +223,8 @@ export function GameScreen() {
     <div style={{ position: 'absolute', inset: 0 }}>
       <Canvas
         shadows={quality !== 'low'}
-        dpr={[1, quality === 'high' ? 1.75 : 1.15]}
-        gl={{ antialias: false, powerPreference: 'high-performance' }}
+        dpr={[1, GRAPHICS_PRESETS[quality].dpr]}
+        gl={{ antialias: quality === 'low', powerPreference: 'high-performance' }}
         camera={{ fov: 42, near: 0.1, far: 140, position: [0, 1.6, 6.2] }}
         onCreated={({ gl }) => {
           THREE.ColorManagement.enabled = true;
@@ -293,6 +295,7 @@ export function GameScreen() {
         </button>
       )}
       <HKey onControls={() => setShowControls((v) => !v)} />
+      <GamepadIndicator />
     </div>
   );
 }

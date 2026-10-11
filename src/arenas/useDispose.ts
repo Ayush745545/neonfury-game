@@ -9,10 +9,19 @@ type Disposable = { dispose: () => void };
  */
 export function useDispose(items: Disposable[]): void {
   const ref = useRef(items);
+  // Quality and stage changes replace GPU resources while this owner stays mounted.
+  // Compare contents because callers can pass a fresh wrapper array each render.
   useEffect(() => {
-    const list = ref.current;
+    for (const previous of ref.current) {
+      if (!items.includes(previous)) {
+        try { previous?.dispose(); } catch { /* already gone */ }
+      }
+    }
+    ref.current = items;
+  });
+  useEffect(() => {
     return () => {
-      for (const it of list) {
+      for (const it of ref.current) {
         try { it?.dispose(); } catch { /* already gone */ }
       }
     };

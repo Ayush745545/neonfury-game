@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import ReactThreeTestRenderer from '@react-three/test-renderer';
 import * as THREE from 'three';
-import { FighterView } from '../fighters/FighterView';
+import { ProceduralFighter as FighterView } from '../fighters/FighterView';
 import { CityStage } from '../arenas/CityStage';
 import { STAGES } from '../arenas/stages';
 import { VFXLayer } from '../vfx/VFXLayer';

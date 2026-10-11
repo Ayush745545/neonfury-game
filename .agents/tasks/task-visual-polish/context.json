@@ -1,0 +1,25 @@
+{
+  "project_type": "React Three Fiber + Three.js fighting game with deterministic 60 Hz combat sim",
+  "language": "TypeScript",
+  "build_system": "npm with Vite bundler and tsc compiler",
+  "test_framework": "vitest (npm run test)",
+  "build_command": "npm run build",
+  "test_command": "npm run test",
+  "verification_instructions": "Run npm run build to verify TypeScript compilation and bundling. Run npm run test to verify no regressions in combat/animation/rendering logic. Start dev server with npm run dev and visually confirm fighters grounded, contact shadows visible, water splashes on landing, road markings present, and lighting consistent.",
+  "snapshot_or_generated_files": "null",
+  "environment_constraints": "Deterministic 60 Hz combat sim in GameEngine.ts must not be touched except for VFX event emission. All changes are rendering/VFX only. STAGE_FLOOR_Y=0 is the ground plane. Fighter physics uses f.y where 0=floor contact.",
+  "contribution_requirements": "Preserve existing combat mechanics, 15 fighters, abilities, multiplayer lockstep determinism. Fix implementation rather than rebuilding. Test changes do not break existing tests.",
+  "key_patterns": "VFX events emitted via bus.emit from GameEngine trigger spawns in VFXLayer.tsx which calls vfxManager.ts methods. Fighter rendering: FighterView.tsx wraps ProceduralFighter (rig.ts) or ModelFighter (GlbFighter.tsx). Both set position from f.x, f.y, 0. Arena: CityStage.tsx renders ground plane at Y=0 with rotation[-PI/2,0,0]. Ground has receiveShadow=true. FighterLights.tsx key light has castShadow. Fighter meshes have castShadow/receiveShadow=true. Constants in src/config/constants.ts define LAND_IMPACT thresholds and STAGE_FLOOR_Y=0.",
+  "relevant_files": [
+    "src/game/GameEngine.ts (lines 1095-1145: physics() landing detection and VFX emission)",
+    "src/vfx/vfxManager.ts (spawnDust, spawnBurst, spawnSparks methods — add spawnWaterSplash)",
+    "src/vfx/VFXLayer.tsx (event bus listener, calls vfx spawns)",
+    "src/fighters/FighterView.tsx (ProceduralFighter root positioning, add ContactShadowBlob)",
+    "src/fighters/GlbFighter.tsx (ModelFighter positioning at line ~70)",
+    "src/fighters/rig.ts (hipsAnchorY=0.98, procedural rig builder)",
+    "src/arenas/CityStage.tsx (Ground component lines 250-290, directionalLight castShadow line ~350)",
+    "src/config/constants.ts (LAND_IMPACT_SOFT=4, MEDIUM=9, HARD=16, STAGE_FLOOR_Y=0)",
+    "src/game/types.ts (GameEvent type union for vfx events)"
+  ],
+  "directory_structure": "src/game/ (GameEngine, types, eventBus), src/vfx/ (vfxManager, VFXLayer, powerProfiles), src/fighters/ (FighterView, GlbFighter, rig, characters), src/arenas/ (CityStage, TokyoStreet, textures, stages), src/config/ (constants), src/animations/ (animPlayer, animData, types)"
+}

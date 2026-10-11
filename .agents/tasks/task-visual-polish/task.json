@@ -1,0 +1,7 @@
+{
+  "task_id": "task-visual-polish",
+  "task_description": "Fix ground contact, landing physics VFX, contact shadows, wet asphalt road markings, and lighting for polished cinematic arena",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

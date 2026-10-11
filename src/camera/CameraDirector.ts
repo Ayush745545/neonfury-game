@@ -19,7 +19,11 @@ const BASE_FOV = 42;
 export class CameraDirector {
   private pos = new THREE.Vector3(0, 1.6, 6);
   private look = new THREE.Vector3(0, 1.05, 0);
-  private posVel = new THREE.Vector3();
+  private desiredPos = new THREE.Vector3();
+  private desiredLook = new THREE.Vector3();
+  private impactFocus = new THREE.Vector3();
+  private impactFocusLife = 0;
+  private impactRecoil = 0;
   private fov = BASE_FOV;
   private fovTarget = BASE_FOV;
   private mode: CamMode = 'standard';
@@ -40,6 +44,11 @@ export class CameraDirector {
         if (useSettings.getState().screenShake) this.shake = Math.min(1.4, this.shake + e.intensity * 0.5);
       } else if (e.type === 'camera') {
         this.requestMode(e.mode as CamMode, e.duration ?? 0.3, e.intensity ?? 1);
+      } else if (e.type === 'hit' && !e.blocked) {
+        // A brief focus pull follows the actual contact point while the two-shot holds.
+        this.impactFocus.set(e.x, e.y, e.z ?? 0);
+        this.impactFocusLife = e.effect === 'heavy' || e.counter ? 0.24 : 0.12;
+        this.impactRecoil = (e.attacker === 0 ? -1 : 1) * Math.min(0.13, e.power * 0.001);
       } else if (e.type === 'slowmo') {
         // nothing — timescale handled by engine
       }
@@ -55,20 +64,26 @@ export class CameraDirector {
     this.mode = match.phase === 'intro' ? 'intro' : 'standard';
     this.modeUntil = 0;
     this.shake = 0;
+    this.impactPunch = 0;
+    this.impactFocusLife = 0;
+    this.impactRecoil = 0;
+    this.orbitAngle = 0;
+    this.time = 0;
+    this.fov = this.fovTarget = BASE_FOV;
     this.lastShot = -1;
     this.pos.set(0, 1.6, 6);
     this.look.set(0, 1.05, 0);
-    this.posVel.set(0, 0, 0);
   }
 
   private requestMode(mode: CamMode, duration: number, intensity: number): void {
     if (mode === 'impact') {
       this.impactPunch = Math.max(this.impactPunch, intensity);
-      this.shake = Math.min(1.5, this.shake + intensity * 0.28);
+      if (useSettings.getState().screenShake) this.shake = Math.min(1.5, this.shake + intensity * 0.28);
       return; // impact is an impulse over the current mode
     }
     // ko/victory/intro are phase-driven (see update) — ignore external requests
     if (mode === 'ko' || mode === 'victory' || mode === 'intro') return;
+    if (mode !== 'standard' && mode !== 'special' && mode !== 'super') return;
     if (this.mode === 'intro' || this.mode === 'ko' || this.mode === 'victory') return;
     const order: CamMode[] = ['standard', 'special', 'super'];
     if (order.indexOf(mode) >= order.indexOf(this.mode) || this.modeUntil <= this.time) {
@@ -95,14 +110,15 @@ export class CameraDirector {
 
   update(dt: number, match: MatchRuntime): void {
     if (!this.camera) return;
+    if (match.phase === 'paused') return;
     this.time += dt;
     const cam = this.camera;
     const [a, b] = match.fighters;
 
     this.applyPhaseMode(match);
 
-    let desiredPos = this.pos.clone();
-    let desiredLook = this.look.clone();
+    let desiredPos = this.desiredPos.copy(this.pos);
+    let desiredLook = this.desiredLook.copy(this.look);
     let desiredFov = BASE_FOV;
     let springK = 7;
     let snap = false;
@@ -146,12 +162,12 @@ export class CameraDirector {
         const mid = (att.x + other.x) / 2;
         const dist = Math.abs(att.x - other.x);
         const halfW = Math.max(2.0, dist / 2 + 1.0);
-        const z = clamp(this.zForWidth(halfW * 0.98, cam), 3.6, 6.4);
+        desiredFov = 36 + Math.sin(this.time * 2.2) * 0.8;
+        const z = Math.max(3.6, this.zForWidth(halfW, cam, desiredFov));
         this.orbitAngle += dt * 0.5;
         const arc = Math.sin(this.orbitAngle * 0.9) * 0.5;
         desiredPos.set(clamp(mid + att.facing * 0.5 + arc, -5, 5), 1.32 + Math.sin(this.time * 0.8) * 0.08, z);
         desiredLook.set(mid + att.facing * 0.25, 1.12, 0);
-        desiredFov = 34 + Math.sin(this.time * 2.2) * 1.6;
         springK = 5;
         break;
       }
@@ -160,8 +176,8 @@ export class CameraDirector {
         const other = att === a ? b : a;
         const mid = (att.x + other.x) / 2;
         const halfW = Math.max(2.0, Math.abs(att.x - other.x) / 2 + 1.0);
-        const z = this.zForWidth(halfW * 0.92, cam);
-        desiredPos.set(clamp(mid + att.facing * 0.45, -4.4, 4.4), 1.42, clamp(z, 3.6, 7));
+        const z = this.zForWidth(halfW, cam, 37);
+        desiredPos.set(clamp(mid + att.facing * 0.3, -4.4, 4.4), 1.42, Math.max(z, 3.6));
         desiredLook.set(mid + att.facing * 0.25, 1.1, 0);
         desiredFov = 37;
         springK = 6;
@@ -173,15 +189,22 @@ export class CameraDirector {
         const dist = Math.abs(a.x - b.x);
         const airLift = Math.max(a.y, b.y) * 0.35;
         const halfW = Math.max(2.15, dist / 2 + 1.18);
-        const z = this.zForWidth(halfW, cam) - this.impactPunch * 0.5;
         const attacker = this.whoAttacking(a, b);
+        desiredFov = (attacker && attacker.move?.kind === 'special' ? 39 : BASE_FOV) - this.impactPunch * 0.65;
+        const z = this.zForWidth(halfW, cam, desiredFov);
         const bias = attacker ? attacker.facing * (attacker.move && attacker.move.kind !== 'normal' ? 0.5 : 0.22) : 0;
-        desiredPos.set(clamp(mid + bias, -4.6, 4.6), 1.52 + dist * 0.028 + airLift * 0.5, clamp(z, 3.3, 8.6));
+        desiredPos.set(clamp(mid + bias, -4.6, 4.6), 1.52 + dist * 0.028 + airLift * 0.5, Math.max(z, 3.3));
         desiredLook.set(clamp(mid + bias * 0.4, -5, 5), 1.06 + airLift * 0.6, 0);
-        desiredFov = attacker && attacker.move?.kind === 'special' ? 39 : BASE_FOV;
         springK = 6.5;
         break;
       }
+    }
+
+    const gameplay = this.mode === 'standard' || this.mode === 'special' || this.mode === 'super';
+    if (gameplay && this.impactFocusLife > 0) {
+      const pull = Math.min(0.08, this.impactFocusLife * 0.3);
+      desiredLook.x = lerp(desiredLook.x, this.impactFocus.x, pull);
+      desiredLook.y = lerp(desiredLook.y, this.impactFocus.y, pull);
     }
 
     // spring smoothing (critically-ish damped)
@@ -189,16 +212,20 @@ export class CameraDirector {
     this.pos.lerp(desiredPos, k);
     this.look.lerp(desiredLook, k);
     this.impactPunch = Math.max(0, this.impactPunch - dt * 3.2);
+    this.impactFocusLife = Math.max(0, this.impactFocusLife - dt);
+    this.impactRecoil *= Math.exp(-dt * 16);
 
     // shake
     this.shake = Math.max(0, this.shake - dt * 2.1);
-    const sh = this.shake * this.shake;
+    const shakeEnabled = useSettings.getState().screenShake;
+    if (!shakeEnabled) this.shake = 0;
+    const sh = shakeEnabled ? this.shake * this.shake : 0;
     const shakeX = (Math.sin(this.time * 91) + Math.sin(this.time * 57.3)) * 0.5 * sh * 0.16;
     const shakeY = (Math.sin(this.time * 83.7) + Math.sin(this.time * 47.1)) * 0.5 * sh * 0.14;
     const roll = Math.sin(this.time * 71) * sh * 0.012;
 
     cam.position.copy(this.pos);
-    cam.position.x += shakeX;
+    cam.position.x += shakeX + (shakeEnabled ? this.impactRecoil : 0);
     cam.position.y += shakeY;
     cam.lookAt(this.look);
     cam.rotation.z += roll;
@@ -209,12 +236,43 @@ export class CameraDirector {
       cam.fov = this.fov;
       cam.updateProjectionMatrix();
     }
+    if (gameplay) this.keepFightersInFrame(cam, a, b);
   }
 
-  private zForWidth(halfW: number, cam: THREE.PerspectiveCamera): number {
+  private zForWidth(halfW: number, cam: THREE.PerspectiveCamera, fov = cam.fov): number {
     const aspect = cam.aspect || 16 / 9;
-    const fovX = 2 * Math.atan(Math.tan((cam.fov * Math.PI) / 360) * aspect);
+    const fovX = 2 * Math.atan(Math.tan((fov * Math.PI) / 360) * aspect);
     return halfW / Math.tan(fovX / 2);
+  }
+
+  /** Enforce framing after smoothing, FOV changes and shake, including portrait screens. */
+  private keepFightersInFrame(cam: THREE.PerspectiveCamera, a: FighterRuntime, b: FighterRuntime): void {
+    const tanY = Math.tan((cam.fov * Math.PI) / 360) * 0.9;
+    const tanX = tanY * (cam.aspect || 16 / 9);
+    for (let pass = 0; pass < 6; pass++) {
+      const px = cam.position.x, py = cam.position.y, pz = cam.position.z;
+      let fx = this.look.x - px, fy = this.look.y - py, fz = this.look.z - pz;
+      const fl = Math.hypot(fx, fy, fz);
+      fx /= fl; fy /= fl; fz /= fl;
+      const rl = Math.hypot(fx, fz);
+      const rx = -fz / rl, rz = fx / rl;
+      const ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
+      let ratio = 1;
+      for (let i = 0; i < 2; i++) {
+        const fighter = i === 0 ? a : b;
+        for (let corner = 0; corner < 4; corner++) {
+          const x = fighter.x + (corner & 1 ? 0.92 : -0.92) - px;
+          const y = fighter.y + (corner & 2 ? 2.2 : 0.04) - py;
+          const z = -pz;
+          const depth = Math.max(0.01, x * fx + y * fy + z * fz);
+          ratio = Math.max(ratio, Math.abs(x * rx + z * rz) / (depth * tanX), Math.abs(x * ux + y * uy + z * uz) / (depth * tanY));
+        }
+      }
+      if (ratio <= 1.001) break;
+      cam.position.z += Math.max(0.08, cam.position.z * (ratio - 1) * 1.08);
+      cam.lookAt(this.look);
+      this.pos.z = Math.max(this.pos.z, cam.position.z);
+    }
   }
 
   private whoAttacking(a: FighterRuntime, b: FighterRuntime): FighterRuntime | null {
