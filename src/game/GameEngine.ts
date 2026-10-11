@@ -637,8 +637,7 @@ export class GameEngine {
         f.crouching = true;
       } else {
         this.enter(f, 'idle');
-        bus.emit({ type: 'sfx', name: 'land' });
-        bus.emit({ type: 'vfx', kind: 'dust', x: f.x, y: 0.03, color: '#9fb4c8', power: 1.6 });
+        // landing VFX/SFX now handled by physics() based on impact velocity
       }
     }
   }
@@ -1167,6 +1166,7 @@ export class GameEngine {
     switch (f.state) {
       case 'dashF': case 'dashB': return null; // stepDash owns vx
       case 'attack': case 'airAttack': return null; // runMoveFrames owns vx
+      case 'jump': case 'airHitstun': return K.FRICTION_IDLE; // typically airborne; explicit for clarity
       case 'hitstun': case 'blockstun': return K.FRICTION_HITSTUN;
       case 'knockdown': return K.FRICTION_KNOCKDOWN;
       case 'ko': return K.FRICTION_KO;
