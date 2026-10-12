@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Check Game Settings</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 40px;
+      background: #1a1a1a;
+      color: #0f0;
+      font-size: 16px;
+    }
+    button {
+      padding: 15px 30px;
+      font-size: 18px;
+      margin: 20px 0;
+      cursor: pointer;
+      background: #ff3366;
+      color: white;
+      border: none;
+      border-radius: 8px;
+    }
+    .setting {
+      margin: 10px 0;
+      padding: 10px;
+      background: #333;
+      border-radius: 4px;
+    }
+    .good { color: #4CAF50; }
+    .bad { color: #f44336; }
+  </style>
+</head>
+<body>
+  <h1>🔧 Check Your Game Settings</h1>
+  
+  <button onclick="checkSettings()">CHECK SETTINGS NOW</button>
+  
+  <div id="results"></div>
+
+  <script>
+    function checkSettings() {
+      const results = document.getElementById('results');
+      
+      // Read from localStorage (where zustand stores settings)
+      const stored = localStorage.getItem('neon-fury-settings');
+      
+      if (!stored) {
+        results.innerHTML = '<div class="bad">❌ No settings found in localStorage</div>';
+        return;
+      }
+      
+      try {
+        const settings = JSON.parse(stored);
+        const state = settings.state;
+        
+        let html = '<h2>Current Settings:</h2>';
+        
+        // Check gamepad enabled
+        const gpEnabled = state.gamepadEnabled ?? true;
+        html += `<div class="setting ${gpEnabled ? 'good' : 'bad'}">
+          <strong>Gamepad Enabled:</strong> ${gpEnabled ? '✓ YES' : '✗ NO'}
+        </div>`;
+        
+        // Check vibration intensity
+        const vibIntensity = state.vibrationIntensity ?? 1.0;
+        html += `<div class="setting ${vibIntensity > 0 ? 'good' : 'bad'}">
+          <strong>Vibration Intensity:</strong> ${vibIntensity} (${Math.round(vibIntensity * 100)}%)
+        </div>`;
+        
+        // Analysis
+        html += '<h2>Analysis:</h2>';
+        if (!gpEnabled) {
+          html += '<div class="bad">❌ Gamepad is DISABLED! Go to Settings and turn it ON</div>';
+        }
+        if (vibIntensity === 0) {
+          html += '<div class="bad">❌ Vibration intensity is 0%! Go to Settings and increase it</div>';
+        }
+        if (gpEnabled && vibIntensity > 0) {
+          html += '<div class="good">✓ Settings look good! The problem is elsewhere.</div>';
+        }
+        
+        // Show all settings
+        html += '<h2>All Settings (debug):</h2>';
+        html += '<pre>' + JSON.stringify(state, null, 2) + '</pre>';
+        
+        results.innerHTML = html;
+        
+      } catch (err) {
+        results.innerHTML = `<div class="bad">❌ Error reading settings: ${err.message}</div>`;
+      }
+    }
+    
+    // Auto-run on load
+    window.addEventListener('load', checkSettings);
+  </script>
+</body>
+</html>
